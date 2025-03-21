@@ -5,8 +5,10 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
-
-import { useColorScheme } from '@/components/useColorScheme';
+import { useColorScheme, View } from 'react-native';
+import MiniPlayer from '../components/MiniPlayer';
+import SongPlayer from '../components/SongPlayer';
+import { AudioProvider } from './context/AudioContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -42,7 +44,14 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return (
+    <AudioProvider>
+      <Stack>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="song" options={{ headerShown: false }} />
+      </Stack>
+    </AudioProvider>
+  );
 }
 
 function RootLayoutNav() {
@@ -50,10 +59,36 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
+      <View style={{ flex: 1 }}>
+        <Stack
+          screenOptions={{
+            headerStyle: {
+              backgroundColor: '#121212',
+            },
+            headerTintColor: '#fff',
+            headerTitleStyle: {
+              fontWeight: 'bold',
+            },
+          }}
+        >
+          <Stack.Screen
+            name="(tabs)"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="modal"
+            options={{
+              presentation: 'modal',
+              headerStyle: {
+                backgroundColor: '#121212',
+              },
+              headerTintColor: '#fff',
+            }}
+          />
+        </Stack>
+      </View>
     </ThemeProvider>
   );
 }
