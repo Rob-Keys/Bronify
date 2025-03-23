@@ -9,6 +9,7 @@ import { useColorScheme, View } from 'react-native';
 import MiniPlayer from '../components/MiniPlayer';
 import SongPlayer from '../components/SongPlayer';
 import { AudioProvider } from './context/AudioContext';
+import SocialProvider from './context/SocialContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -44,14 +45,7 @@ export default function RootLayout() {
     return null;
   }
 
-  return (
-    <AudioProvider>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="song" options={{ headerShown: false }} />
-      </Stack>
-    </AudioProvider>
-  );
+  return <RootLayoutNav />;
 }
 
 function RootLayoutNav() {
@@ -59,36 +53,16 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <View style={{ flex: 1 }}>
-        <Stack
-          screenOptions={{
-            headerStyle: {
-              backgroundColor: '#121212',
-            },
-            headerTintColor: '#fff',
-            headerTitleStyle: {
-              fontWeight: 'bold',
-            },
-          }}
-        >
-          <Stack.Screen
-            name="(tabs)"
-            options={{
-              headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="modal"
-            options={{
-              presentation: 'modal',
-              headerStyle: {
-                backgroundColor: '#121212',
-              },
-              headerTintColor: '#fff',
-            }}
-          />
-        </Stack>
-      </View>
+      <AudioProvider>
+        <SocialProvider>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="song" options={{ headerShown: false }} />
+            <Stack.Screen name="settings" options={{ headerShown: false }} />
+          </Stack>
+        </SocialProvider>
+      </AudioProvider>
     </ThemeProvider>
   );
 }

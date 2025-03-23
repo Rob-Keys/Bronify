@@ -1,4 +1,4 @@
-import { StyleSheet, ScrollView, View, Text, Image, TouchableOpacity, Pressable, Alert } from 'react-native';
+import { StyleSheet, ScrollView, View, Text, Image, TouchableOpacity, Pressable, Alert, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColorScheme } from 'react-native';
@@ -6,6 +6,8 @@ import { useRouter } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useState, useEffect } from 'react';
 import { useAudio } from '../context/AudioContext';
+import { getLebronLastGame, getLebronSeasonStats } from '../services/nbaStats';
+import { getLebronNews, NewsItem } from '../services/newsService';
 
 interface Song {
   id: number;
@@ -16,11 +18,22 @@ interface Song {
   sound?: Audio.Sound;
 }
 
-interface NewsItem {
-  id: number;
-  title: string;
-  source: string;
-  timestamp: string;
+interface GameStats {
+  points: number;
+  rebounds: number;
+  assists: number;
+  steals: number;
+  blocks: number;
+  opponent: string;
+  date: string;
+}
+
+interface SeasonStats {
+  points: number;
+  rebounds: number;
+  assists: number;
+  steals: number;
+  blocks: number;
 }
 
 const topSongs: Song[] = [
@@ -60,25 +73,6 @@ const topArtists = [
   { id: 3, name: 'Artist 3', image: require('@/assets/images/default_pfp.jpg') },
   { id: 4, name: 'Artist 4', image: require('@/assets/images/default_pfp.jpg') },
 ];
-
-const lebronStats = {
-  lastGame: {
-    points: 28,
-    rebounds: 12,
-    assists: 8,
-    steals: 2,
-    blocks: 1,
-    opponent: 'Warriors',
-    date: 'Mar 15, 2024',
-  },
-  season: {
-    points: 25.3,
-    rebounds: 7.2,
-    assists: 8.1,
-    steals: 1.2,
-    blocks: 0.6,
-  },
-};
 
 const lebronNews: NewsItem[] = [
   {
@@ -130,9 +124,52 @@ export default function HomeScreen() {
   const router = useRouter();
   const [currentlyPlaying, setCurrentlyPlaying] = useState<number | null>(null);
   const [songs, setSongs] = useState<Song[]>(topSongs);
+  const [lastGameStats, setLastGameStats] = useState<GameStats | null>(null);
+  const [seasonStats, setSeasonStats] = useState<SeasonStats | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [news, setNews] = useState<NewsItem[]>([]);
+  const [isLoadingNews, setIsLoadingNews] = useState(true);
+  const [newsError, setNewsError] = useState<string | null>(null);
 
   useEffect(() => {
     setupAudio();
+    
+    async function fetchStats() {
+      try {
+        setIsLoading(true);
+        setError(null);
+        const [lastGame, season] = await Promise.all([
+          getLebronLastGame(),
+          getLebronSeasonStats()
+        ]);
+        setLastGameStats(lastGame);
+        setSeasonStats(season);
+      } catch (err) {
+        console.error('Error fetching stats:', err);
+        setError('Failed to load stats');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    
+    async function fetchNews() {
+      try {
+        setIsLoadingNews(true);
+        setNewsError(null);
+        const newsData = await getLebronNews();
+        setNews(newsData);
+      } catch (err) {
+        console.error('Error fetching news:', err);
+        setNewsError('Failed to load news');
+      } finally {
+        setIsLoadingNews(false);
+      }
+    }
+
+    fetchStats();
+    fetchNews();
+    
     return () => {
       cleanupAudio();
     };
@@ -239,6 +276,14 @@ export default function HomeScreen() {
     }
   };
 
+  const handleNewsPress = (url: string) => {
+    if (url) {
+      Linking.openURL(url).catch(err => 
+        console.error('Error opening URL:', err)
+      );
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <ScrollView>
@@ -290,77 +335,109 @@ export default function HomeScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>LeBron James Stats</Text>
-          <View style={styles.statsContainer}>
-            <View style={styles.statsCard}>
-              <Text style={styles.statsTitle}>Last Game</Text>
-              <Text style={styles.statsSubtitle}>{lebronStats.lastGame.opponent}</Text>
-              <Text style={styles.statsSubtitle}>{lebronStats.lastGame.date}</Text>
-              <View style={styles.statsGrid}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.lastGame.points}</Text>
-                  <Text style={styles.statLabel}>PTS</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.lastGame.rebounds}</Text>
-                  <Text style={styles.statLabel}>REB</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.lastGame.assists}</Text>
-                  <Text style={styles.statLabel}>AST</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.lastGame.steals}</Text>
-                  <Text style={styles.statLabel}>STL</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.lastGame.blocks}</Text>
-                  <Text style={styles.statLabel}>BLK</Text>
-                </View>
-              </View>
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <Text style={styles.loadingText}>Loading stats...</Text>
             </View>
+          ) : error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : (
+            <View style={styles.statsContainer}>
+              {lastGameStats && (
+                <View style={styles.statsCard}>
+                  <Text style={styles.statsTitle}>Last Game</Text>
+                  <Text style={styles.statsSubtitle}>{lastGameStats.opponent}</Text>
+                  <Text style={styles.statsSubtitle}>{lastGameStats.date}</Text>
+                  <View style={styles.statsGrid}>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{lastGameStats.points}</Text>
+                      <Text style={styles.statLabel}>PTS</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{lastGameStats.rebounds}</Text>
+                      <Text style={styles.statLabel}>REB</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{lastGameStats.assists}</Text>
+                      <Text style={styles.statLabel}>AST</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{lastGameStats.steals}</Text>
+                      <Text style={styles.statLabel}>STL</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{lastGameStats.blocks}</Text>
+                      <Text style={styles.statLabel}>BLK</Text>
+                    </View>
+                  </View>
+                </View>
+              )}
 
-            <View style={styles.statsCard}>
-              <Text style={styles.statsTitle}>Season Average</Text>
-              <View style={styles.statsGrid}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.season.points}</Text>
-                  <Text style={styles.statLabel}>PTS</Text>
+              {seasonStats && (
+                <View style={styles.statsCard}>
+                  <Text style={styles.statsTitle}>Season Average</Text>
+                  <View style={styles.statsGrid}>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{seasonStats.points}</Text>
+                      <Text style={styles.statLabel}>PTS</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{seasonStats.rebounds}</Text>
+                      <Text style={styles.statLabel}>REB</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{seasonStats.assists}</Text>
+                      <Text style={styles.statLabel}>AST</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{seasonStats.steals}</Text>
+                      <Text style={styles.statLabel}>STL</Text>
+                    </View>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{seasonStats.blocks}</Text>
+                      <Text style={styles.statLabel}>BLK</Text>
+                    </View>
+                  </View>
                 </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.season.rebounds}</Text>
-                  <Text style={styles.statLabel}>REB</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.season.assists}</Text>
-                  <Text style={styles.statLabel}>AST</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.season.steals}</Text>
-                  <Text style={styles.statLabel}>STL</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{lebronStats.season.blocks}</Text>
-                  <Text style={styles.statLabel}>BLK</Text>
-                </View>
-              </View>
+              )}
             </View>
-          </View>
+          )}
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>LeBron News</Text>
-          {lebronNews.map((news) => (
-            <TouchableOpacity key={news.id} style={styles.newsItem}>
-              <View style={styles.newsContent}>
-                <Text style={styles.newsTitle}>{news.title}</Text>
-                <View style={styles.newsFooter}>
-                  <Text style={styles.newsSource}>{news.source}</Text>
-                  <Text style={styles.newsTimestamp}>{news.timestamp}</Text>
+          {isLoadingNews ? (
+            <View style={styles.loadingContainer}>
+              <Text style={styles.loadingText}>Loading news...</Text>
+            </View>
+          ) : newsError ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{newsError}</Text>
+            </View>
+          ) : news.length === 0 ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.loadingText}>No news available</Text>
+            </View>
+          ) : (
+            news.map((newsItem) => (
+              <TouchableOpacity 
+                key={newsItem.id} 
+                style={styles.newsItem}
+                onPress={() => handleNewsPress(newsItem.url)}
+              >
+                <View style={styles.newsContent}>
+                  <Text style={styles.newsTitle}>{newsItem.title}</Text>
+                  <View style={styles.newsFooter}>
+                    <Text style={styles.newsSource}>{newsItem.source}</Text>
+                    <Text style={styles.newsTimestamp}>{newsItem.timestamp}</Text>
+                  </View>
                 </View>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color="#B3B3B3" />
-            </TouchableOpacity>
-          ))}
+                <Ionicons name="chevron-forward" size={24} color="#B3B3B3" />
+              </TouchableOpacity>
+            ))
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -509,5 +586,21 @@ const styles = StyleSheet.create({
   newsTimestamp: {
     fontSize: 14,
     color: '#B3B3B3',
+  },
+  loadingContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#B3B3B3',
+    fontSize: 16,
+  },
+  errorContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  errorText: {
+    color: '#FF4444',
+    fontSize: 16,
   },
 });
