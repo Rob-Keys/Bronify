@@ -60,6 +60,7 @@ function RootLayoutNav() {
             <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
             <Stack.Screen name="song" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
+            <Stack.Screen name="post" options={{ headerShown: false }} />
           </Stack>
         </SocialProvider>
       </AudioProvider>

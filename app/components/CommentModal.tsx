@@ -38,11 +38,11 @@ const CommentModal: React.FC<CommentModalProps> = ({
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // Clear comment input when modal opens
+  // Clear comment input and log visibility immediately when props change
   useEffect(() => {
     if (visible) {
       setComment('');
-      console.log('CommentModal is visible. isTransparent:', isTransparent);
+      console.log('CommentModal visibility changed to:', visible);
     }
   }, [visible]);
 
@@ -68,54 +68,53 @@ const CommentModal: React.FC<CommentModalProps> = ({
       visible={visible}
       onRequestClose={onClose}
       statusBarTranslucent={true}
+      presentationStyle="overFullScreen"
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View style={[
-          styles.overlay,
-          isTransparent && styles.transparentOverlay
-        ]}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.container}
-            keyboardVerticalOffset={isTransparent ? 80 : 0}
-          >
-            <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-              <View style={[
-                styles.modalContent,
-                isTransparent && styles.transparentModalContent
-              ]}>
-                <View style={styles.header}>
-                  <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                    <Ionicons name="close" size={24} color="#B3B3B3" />
-                  </TouchableOpacity>
-                  <Text style={styles.title}>{title}</Text>
-                  <TouchableOpacity
-                    style={[styles.submitButton, !comment.trim() && styles.disabledButton]}
-                    onPress={handleSubmit}
-                    disabled={!comment.trim() || isSubmitting}
-                  >
-                    {isSubmitting ? (
-                      <ActivityIndicator size="small" color="white" />
-                    ) : (
-                      <Text style={styles.submitText}>Post</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="Write your comment..."
-                  placeholderTextColor="#999"
-                  multiline
-                  value={comment}
-                  onChangeText={setComment}
-                  autoFocus
-                />
+      <View style={[
+        styles.overlay,
+        isTransparent && styles.transparentOverlay
+      ]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.container}
+          keyboardVerticalOffset={isTransparent ? 80 : 0}
+        >
+          <SafeAreaView edges={['bottom']} style={styles.safeArea}>
+            <View style={[
+              styles.modalContent,
+              isTransparent && styles.transparentModalContent
+            ]}>
+              <View style={styles.header}>
+                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                  <Ionicons name="close" size={24} color="#B3B3B3" />
+                </TouchableOpacity>
+                <Text style={styles.title}>{title}</Text>
+                <TouchableOpacity
+                  style={[styles.submitButton, !comment.trim() && styles.disabledButton]}
+                  onPress={handleSubmit}
+                  disabled={!comment.trim() || isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Text style={styles.submitText}>Post</Text>
+                  )}
+                </TouchableOpacity>
               </View>
-            </SafeAreaView>
-          </KeyboardAvoidingView>
-        </View>
-      </TouchableWithoutFeedback>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Write your comment..."
+                placeholderTextColor="#999"
+                multiline
+                value={comment}
+                onChangeText={setComment}
+                autoFocus
+              />
+            </View>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 };
@@ -125,9 +124,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'flex-end',
+    zIndex: 9999,
   },
   transparentOverlay: {
     backgroundColor: 'rgba(0, 0, 0, 0.8)', // Darker background when overlaying on another modal
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   container: {
     width: '100%',
@@ -142,6 +147,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -5 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
+    zIndex: 9999,
   },
   modalContent: {
     backgroundColor: '#121212',
