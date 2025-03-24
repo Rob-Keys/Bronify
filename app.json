@@ -8,19 +8,53 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio",
+          "processing",
+          "fetch",
+          "remote-notification"
+        ],
+        "AVAudioSessionCategoryOptions": "AVAudioSessionCategoryOptionMixWithOthers",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "NSMicrophoneUsageDescription": "This app does not use the microphone",
+        "kTCCServiceMediaLibrary": "This app requires access to play music",
+        "UIRequiresPersistentWiFi": true,
+        "NSBonjourServices": true
+      },
+      "bundleIdentifier": "com.yourcompany.bronify"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "package": "com.yourcompany.bronify"
     },
     "web": {
       "bundler": "metro",
       "output": "static"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "This app does not use the microphone."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -1,71 +1,61 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable } from 'react-native';
-import { Link } from 'expo-router';
-
+import { FontAwesome } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { useTheme } from '@/app/context/ThemeContext';
 
-// You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
 function TabBarIcon(props: {
-  name: React.ComponentProps<typeof Ionicons>['name'];
+  name: React.ComponentProps<typeof FontAwesome>['name'];
   color: string;
-  size: number;
 }) {
-  return <Ionicons size={props.size} style={{ marginBottom: -3 }} {...props} />;
+  return <FontAwesome size={22} style={{ marginBottom: -3 }} {...props} />;
 }
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
+  const { colors } = useTheme();
+  
   return (
     <Tabs
       screenOptions={{
-        tabBarStyle: {
-          backgroundColor: '#121212',
-          borderTopColor: '#404040',
-          paddingBottom: 15,
-          height: 65,
+        tabBarActiveTintColor: colors.button,
+        tabBarInactiveTintColor: colors.neutral,
+        tabBarStyle: { 
+          backgroundColor: colors.card,
+          borderTopColor: colors.border,
+          borderTopWidth: 1,
         },
-        tabBarActiveTintColor: Colors[colorScheme ?? 'dark'].tint,
-        tabBarInactiveTintColor: '#B3B3B3',
-        headerStyle: {
-          backgroundColor: '#121212',
+        tabBarLabelStyle: {
+          fontSize: 12,
         },
-        headerTintColor: '#fff',
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
-      }}
-    >
+        headerShown: false,
+      }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
         }}
       />
       <Tabs.Screen
         name="social"
         options={{
           title: 'Social',
-          tabBarIcon: ({ color }) => <Ionicons name="people" size={24} color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="users" color={color} />,
         }}
       />
       <Tabs.Screen
         name="search"
         options={{
           title: 'Search',
-          tabBarIcon: ({ color }) => <Ionicons name="search" size={24} color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="search" color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color }) => <Ionicons name="person" size={24} color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
         }}
       />
     </Tabs>

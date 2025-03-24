@@ -1,44 +1,45 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Image, ActivityIndicator, Alert, FlatList } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Post, Comment } from '@/app/services/socialService';
-import CommentModal from '@/app/components/CommentModal';
+import { Post } from '@/app/services/types';
 import { useSocial } from '@/app/context/SocialContext';
+import { useTheme } from '@/app/context/ThemeContext';
 
 export default function PostScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { postId } = params;
+  const { colors } = useTheme();
   
   // Use the social context
   const { 
     posts, 
     loadPosts, 
-    likePost, 
-    repostPost, 
-    addPostComment, 
-    getPostComments, 
-    likeComment, 
-    dislikeComment, 
-    replyToComment 
+    togglePostLike, 
+    togglePostDislike,
+    addComment,
+    deletePost,
+    isCurrentUserPost,
+    getPost
   } = useSocial();
   
-  // Comment modal state
-  const [commentModalVisible, setCommentModalVisible] = useState(false);
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [isLoadingComments, setIsLoadingComments] = useState(true);
-
-  // Reply functionality
-  const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
+  // State for the current post and its replies
+  const [mainPost, setMainPost] = useState<Post | null>(null);
+  const [replies, setReplies] = useState<Post[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Reply modal state
   const [replyModalVisible, setReplyModalVisible] = useState(false);
+  const [replyContent, setReplyContent] = useState('');
+  const [isPosting, setIsPosting] = useState(false);
+  const [parentPostId, setParentPostId] = useState<string | null>(null);
+  
+  // Ref for scrolling
+  const scrollViewRef = useRef<ScrollView>(null);
 
-  const commentsScrollViewRef = useRef<FlatList>(null);
-  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
-
-  // Load the post data
+  // Load the post and its replies
   useEffect(() => {
     if (!postId || typeof postId !== 'string') {
       Alert.alert('Error', 'Invalid post ID');
@@ -47,191 +48,208 @@ export default function PostScreen() {
     }
 
     const loadPostData = async () => {
-      // Load posts if they aren't already loaded
-      if (posts.length === 0) {
-        await loadPosts();
-      }
-      
-      // Find the post in the context
-      const post = posts.find(p => p.id === postId);
-      if (!post) {
-        Alert.alert('Error', 'Post not found');
-        router.back();
-        return;
-      }
-      
-      setSelectedPost(post);
-      
-      // Load comments
       try {
-        setIsLoadingComments(true);
-        const postComments = await getPostComments(postId);
+        setIsLoading(true);
         
-        if (postComments) {
-          setComments(postComments);
-          
-          // Check if we should highlight a specific comment
-          const commentId = params.commentId as string | undefined;
-          if (commentId) {
-            setHighlightedCommentId(commentId);
-          }
-        } else {
-          setComments([]);
+        // Ensure posts are loaded
+        if (posts.length === 0) {
+          await loadPosts();
         }
+        
+        // Use the getPost function to find the post, which can find replies at any level
+        const fetchedPost = await getPost(postId);
+        if (!fetchedPost) {
+          Alert.alert('Error', 'Post not found');
+          router.back();
+          return;
+        }
+        
+        setMainPost(fetchedPost);
+        
+        // Get direct replies to this post
+        const directReplies = fetchedPost.commentsList && Array.isArray(fetchedPost.commentsList) 
+          ? fetchedPost.commentsList 
+          : [];
+        setReplies(directReplies);
       } catch (error) {
-        console.error('Error loading comments:', error);
-        Alert.alert('Error', 'Failed to load comments');
+        console.error('Error loading post:', error);
+        Alert.alert('Error', 'Failed to load post');
       } finally {
-        setIsLoadingComments(false);
+        setIsLoading(false);
       }
     };
     
     loadPostData();
-  }, [postId, params.commentId]);
-  
-  // Scroll to highlighted comment if needed
-  useEffect(() => {
-    if (highlightedCommentId && commentsScrollViewRef.current) {
-      // Find the index of the comment to scroll to
-      const commentIndex = comments.findIndex(
-        comment => comment.id === highlightedCommentId
-      );
-      
-      if (commentIndex !== -1) {
-        // Wait for the list to render
-        setTimeout(() => {
-          commentsScrollViewRef.current?.scrollToIndex({
-            index: commentIndex,
-            animated: true,
-            viewPosition: 0.5, // Center the item
-          });
-        }, 500);
-      }
-    }
-  }, [highlightedCommentId, comments]);
+  }, [postId, posts]);
 
-  const handleBackPress = () => {
+  const handleBackPress = async () => {
+    // Use native back navigation
     router.back();
   };
 
-  const handleLike = async () => {
-    if (!selectedPost) return;
-    
+  const handleLike = async (post: Post) => {
     try {
-      await likePost(selectedPost.id);
-      // Update the post in our local state
-      const updatedPosts = await loadPosts();
-      const updatedPost = updatedPosts.find(p => p.id === selectedPost.id);
-      if (updatedPost) {
-        setSelectedPost(updatedPost);
+      await togglePostLike(post.id);
+      await loadPosts(); // Reload posts to get updated data
+      
+      // If this is the main post, update it directly using getPost
+      if (mainPost && post.id === mainPost.id) {
+        const updatedPost = await getPost(post.id);
+        if (updatedPost) {
+          setMainPost(updatedPost);
+        }
+      }
+      
+      // Update the replies list if a reply was liked
+      if (replies.some(r => r.id === post.id)) {
+        if (mainPost?.id) {
+          const updatedMainPost = await getPost(mainPost.id);
+          if (updatedMainPost) {
+            // Ensure commentsList exists before setting replies
+            if (updatedMainPost.commentsList && Array.isArray(updatedMainPost.commentsList)) {
+              setReplies(updatedMainPost.commentsList);
+            } else {
+              setReplies([]);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Error liking post:', error);
-      Alert.alert('Error', 'Failed to like post. Please try again.');
+      Alert.alert('Error', 'Failed to like post');
     }
   };
 
-  const handleRepost = async () => {
-    if (!selectedPost) return;
-    
+  const handleDislike = async (post: Post) => {
     try {
-      await repostPost(selectedPost.id);
-      // Update the post in our local state
-      const updatedPosts = await loadPosts();
-      const updatedPost = updatedPosts.find(p => p.id === selectedPost.id);
-      if (updatedPost) {
-        setSelectedPost(updatedPost);
-      }
-    } catch (error) {
-      console.error('Error reposting:', error);
-      Alert.alert('Error', 'Failed to dislike post. Please try again.');
-    }
-  };
-
-  const handleAddComment = () => {
-    setCommentModalVisible(true);
-  };
-
-  const handleCommentSubmit = async (comment: string) => {
-    if (!selectedPost) return;
-    
-    try {
-      await addPostComment(selectedPost.id, comment);
+      await togglePostDislike(post.id);
+      await loadPosts(); // Reload posts to get updated data
       
-      // Update the post and comments
-      const updatedPosts = await loadPosts();
-      const updatedPost = updatedPosts.find(p => p.id === selectedPost.id);
-      if (updatedPost) {
-        setSelectedPost(updatedPost);
+      // If this is the main post, update it directly using getPost
+      if (mainPost && post.id === mainPost.id) {
+        const updatedPost = await getPost(post.id);
+        if (updatedPost) {
+          setMainPost(updatedPost);
+        }
       }
       
-      // Refresh comments
-      const updatedComments = await getPostComments(selectedPost.id);
-      if (updatedComments) {
-        setComments(updatedComments);
+      // Update the replies list if a reply was disliked
+      if (replies.some(r => r.id === post.id)) {
+        if (mainPost?.id) {
+          const updatedMainPost = await getPost(mainPost.id);
+          if (updatedMainPost) {
+            // Ensure commentsList exists before setting replies
+            if (updatedMainPost.commentsList && Array.isArray(updatedMainPost.commentsList)) {
+              setReplies(updatedMainPost.commentsList);
+            } else {
+              setReplies([]);
+            }
+          }
+        }
       }
     } catch (error) {
-      console.error('Error adding comment:', error);
-      Alert.alert('Error', 'Failed to add comment. Please try again.');
-      throw error;
+      console.error('Error disliking post:', error);
+      Alert.alert('Error', 'Failed to dislike post');
     }
   };
 
-  const handleCommentLike = async (commentId: string) => {
-    if (!selectedPost) return;
-    
-    try {
-      await likeComment(selectedPost.id, commentId);
-      
-      // Refresh comments
-      const updatedComments = await getPostComments(selectedPost.id);
-      if (updatedComments) {
-        setComments(updatedComments);
-      }
-    } catch (error) {
-      console.error('Error liking comment:', error);
-      Alert.alert('Error', 'Failed to like comment. Please try again.');
-    }
+  const handleDeletePost = (post: Post) => {
+    Alert.alert(
+      "Delete Post",
+      "Are you sure you want to delete this post? This action cannot be undone.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deletePost(post.id);
+              
+              // If we're deleting the main post, go back
+              if (mainPost && post.id === mainPost.id) {
+                router.back();
+              } else {
+                // We deleted a reply, update the replies list
+                await loadPosts();
+                
+                // Use getPost to find the main post even if it's deeply nested
+                if (mainPost?.id) {
+                  const updatedMainPost = await getPost(mainPost.id);
+                  if (updatedMainPost) {
+                    // Ensure commentsList exists before setting replies
+                    if (updatedMainPost.commentsList && Array.isArray(updatedMainPost.commentsList)) {
+                      setReplies(updatedMainPost.commentsList);
+                    } else {
+                      setReplies([]);
+                    }
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Error deleting post:', error);
+              Alert.alert('Error', 'Failed to delete post');
+            }
+          }
+        }
+      ]
+    );
   };
 
-  const handleCommentDislike = async (commentId: string) => {
-    if (!selectedPost) return;
-    
-    try {
-      await dislikeComment(selectedPost.id, commentId);
-      
-      // Refresh comments
-      const updatedComments = await getPostComments(selectedPost.id);
-      if (updatedComments) {
-        setComments(updatedComments);
-      }
-    } catch (error) {
-      console.error('Error disliking comment:', error);
-      Alert.alert('Error', 'Failed to dislike comment. Please try again.');
-    }
-  };
-
-  const handleReplyPress = (commentId: string) => {
-    setReplyToCommentId(commentId);
+  const handleReplyButtonPress = (post: Post) => {
+    setParentPostId(post.id);
     setReplyModalVisible(true);
   };
 
-  const handleReplySubmit = async (replyContent: string) => {
-    if (!selectedPost || !replyToCommentId) return;
-    
-    try {
-      await replyToComment(selectedPost.id, replyToCommentId, replyContent);
-      
-      // Refresh comments
-      const updatedComments = await getPostComments(selectedPost.id);
-      if (updatedComments) {
-        setComments(updatedComments);
-      }
-    } catch (error) {
-      console.error('Error adding reply:', error);
-      Alert.alert('Error', 'Failed to add reply. Please try again.');
-      throw error;
+  const handleSubmitReply = async () => {
+    if (!parentPostId || !replyContent.trim()) {
+      return;
     }
+
+    try {
+      setIsPosting(true);
+      await addComment(parentPostId, replyContent);
+      
+      // Reload data to get updated posts
+      await loadPosts();
+      
+      // Update the UI using getPost to find the post at any nesting level
+      if (mainPost?.id) {
+        const updatedMainPost = await getPost(mainPost.id);
+        if (updatedMainPost) {
+          setMainPost(updatedMainPost);
+          // Ensure commentsList exists before setting replies
+          if (updatedMainPost.commentsList && Array.isArray(updatedMainPost.commentsList)) {
+            setReplies(updatedMainPost.commentsList);
+          } else {
+            setReplies([]);
+          }
+        }
+      }
+      
+      // Reset state
+      setReplyContent('');
+      setReplyModalVisible(false);
+    } catch (error) {
+      console.error('Error posting reply:', error);
+      Alert.alert('Error', 'Failed to post reply');
+    } finally {
+      setIsPosting(false);
+    }
+  };
+
+  const handleViewReplies = (post: Post) => {
+    // Use router.push for forward navigation to ensure proper animation
+    router.push({
+      pathname: '/reply',
+      params: { 
+        replyId: post.id,
+        parentId: postId?.toString()
+      }
+    });
   };
 
   const getProfileImage = (imageName: string) => {
@@ -241,228 +259,235 @@ export default function PostScreen() {
     return require('@/assets/images/default_pfp.jpg'); // Fallback to default
   };
 
-  const renderCommentItem = ({ item }: { item: Comment }) => (
-    <View style={[
-      styles.commentItem,
-      highlightedCommentId === item.id && styles.highlightedComment
-    ]}>
-      <View style={styles.commentHeader}>
-        <Image 
-          source={require('@/assets/images/default_pfp.jpg')} 
-          style={styles.commentProfileImage} 
-        />
-        <View>
-          <View style={styles.commentUserInfo}>
-            <Text style={styles.commentUsername}>{item.username}</Text>
-            <Text style={styles.commentHandle}>{item.handle}</Text>
-            <Text style={styles.commentTimestamp}>· {item.timestamp}</Text>
-          </View>
-          <Text style={styles.commentContent}>{item.content}</Text>
-          
-          <View style={styles.commentActions}>
-            <TouchableOpacity 
-              style={styles.commentActionButton}
-              onPress={() => handleReplyPress(item.id)}
-            >
-              <Ionicons name="chatbubble-outline" size={16} color="#B3B3B3" />
-              <Text style={styles.commentActionText}>Reply</Text>
+  const countNestedReplies = (post: Post): number => {
+    // Make sure commentsList exists and is an array
+    if (!post.commentsList || !Array.isArray(post.commentsList)) {
+      return 0;
+    }
+    
+    return post.commentsList.length;
+  };
+
+  const renderPost = (post: Post, isReply = false) => {
+    const nestedRepliesCount = countNestedReplies(post);
+    
+    return (
+      <View style={[
+        styles.postContainer,
+        { borderBottomColor: colors.border },
+        isReply ? styles.replyContainer : null
+      ]}>
+        <View style={styles.post}>
+          <Image source={getProfileImage(post.profileImage)} style={styles.profileImage} />
+          <View style={styles.postContent}>
+            <View style={styles.postHeader}>
+              <View style={styles.userInfo}>
+                <Text style={[styles.username, { color: colors.text }]}>{post.username}</Text>
+                <Text style={[styles.handle, { color: colors.neutral }]}>{post.handle}</Text>
+                <Text style={[styles.timestamp, { color: colors.neutral }]}>· {post.timestamp}</Text>
+              </View>
+              {isCurrentUserPost(post.handle) && !isReply && (
+                <TouchableOpacity 
+                  style={styles.moreButton}
+                  onPress={() => handleDeletePost(post)}
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.negative} />
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            <TouchableOpacity onPress={() => isReply ? handleViewReplies(post) : null}>
+              <Text style={[styles.postText, { color: colors.text }]}>{post.content}</Text>
             </TouchableOpacity>
             
-            <View style={styles.commentVoteContainer}>
+            <View style={styles.postActions}>
               <TouchableOpacity 
-                style={styles.commentActionButton}
-                onPress={() => handleCommentLike(item.id)}
+                style={styles.actionButton}
+                onPress={() => handleViewReplies(post)}
               >
-                <Ionicons 
-                  name="thumbs-up" 
-                  size={16} 
-                  color={item.isLiked ? "#1DB954" : "#B3B3B3"} 
-                />
+                <Ionicons name="chatbubble-outline" size={20} color={colors.neutral} />
+                <Text style={[styles.actionText, { color: colors.neutral }]}>
+                  {nestedRepliesCount > 0 ? `${nestedRepliesCount} ${nestedRepliesCount === 1 ? 'Reply' : 'Replies'}` : 'Reply'}
+                </Text>
               </TouchableOpacity>
-              <Text style={[
-                styles.commentVoteText,
-                (item.likes - item.dislikes) > 0 && styles.positiveVote,
-                (item.likes - item.dislikes) < 0 && styles.negativeVote
-              ]}>{item.likes - item.dislikes}</Text>
-              <TouchableOpacity 
-                style={styles.commentActionButton}
-                onPress={() => handleCommentDislike(item.id)}
-              >
-                <Ionicons 
-                  name="thumbs-down" 
-                  size={16} 
-                  color={item.isDisliked ? "#FF4444" : "#B3B3B3"} 
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-          
-          {item.replies && item.replies.length > 0 && (
-            <View style={styles.repliesContainer}>
-              {item.replies.map(reply => (
-                <View key={reply.id} style={styles.replyItem}>
-                  <Image 
-                    source={require('@/assets/images/default_pfp.jpg')} 
-                    style={styles.replyProfileImage} 
+              
+              <View style={styles.voteContainer}>
+                <TouchableOpacity 
+                  style={styles.actionButton}
+                  onPress={() => handleLike(post)}
+                >
+                  <Ionicons 
+                    name="thumbs-up" 
+                    size={20} 
+                    color={post.isLiked ? colors.positive : colors.neutral} 
                   />
-                  <View>
-                    <View style={styles.commentUserInfo}>
-                      <Text style={styles.commentUsername}>{reply.username}</Text>
-                      <Text style={styles.commentHandle}>{reply.handle}</Text>
-                      <Text style={styles.commentTimestamp}>· {reply.timestamp}</Text>
-                    </View>
-                    <Text style={styles.commentContent}>{reply.content}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      </View>
-    </View>
-  );
-
-  return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={handleBackPress}
-          hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-        >
-          <Ionicons name="arrow-back" size={24} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Post</Text>
-        <View style={styles.headerPlaceholder} />
-      </View>
-      
-      {!selectedPost ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#1DB954" />
-          <Text style={styles.loadingText}>Loading post...</Text>
-        </View>
-      ) : (
-        <>
-          <View style={styles.postContainer}>
-            <View style={styles.post}>
-              <Image 
-                source={getProfileImage(selectedPost.profileImage)} 
-                style={styles.postProfileImage} 
-              />
-              <View style={styles.postContent}>
-                <View style={styles.postHeader}>
-                  <Text style={styles.username}>{selectedPost.username}</Text>
-                  <Text style={styles.handle}>{selectedPost.handle}</Text>
-                  <Text style={styles.timestamp}>· {selectedPost.timestamp}</Text>
-                </View>
-                <Text style={styles.postText}>{selectedPost.content}</Text>
-                <View style={styles.postActions}>
-                  <TouchableOpacity 
-                    style={styles.actionButton}
-                    onPress={handleAddComment}
-                  >
-                    <Ionicons name="chatbubble-outline" size={20} color="#B3B3B3" />
-                    <Text style={styles.actionText}>{selectedPost.comments}</Text>
-                  </TouchableOpacity>
-                  <View style={styles.voteContainer}>
-                    <TouchableOpacity 
-                      style={styles.actionButton}
-                      onPress={handleLike}
-                    >
-                      <Ionicons 
-                        name="thumbs-up" 
-                        size={20} 
-                        color={selectedPost.isLiked ? "#1DB954" : "#B3B3B3"} 
-                      />
-                    </TouchableOpacity>
-                    <Text style={[
-                      styles.voteText,
-                      (selectedPost.likes - selectedPost.reposts) > 0 && styles.positiveVote,
-                      (selectedPost.likes - selectedPost.reposts) < 0 && styles.negativeVote
-                    ]}>{selectedPost.likes - selectedPost.reposts}</Text>
-                    <TouchableOpacity 
-                      style={styles.actionButton}
-                      onPress={handleRepost}
-                    >
-                      <Ionicons 
-                        name="thumbs-down" 
-                        size={20} 
-                        color={selectedPost.isReposted ? "#FF4444" : "#B3B3B3"} 
-                      />
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                </TouchableOpacity>
+                <Text style={[
+                  styles.voteText,
+                  { color: colors.neutral },
+                  (post.likes - post.dislikes) > 0 && { color: colors.positive },
+                  (post.likes - post.dislikes) < 0 && { color: colors.negative }
+                ]}>{post.likes - post.dislikes}</Text>
+                <TouchableOpacity 
+                  style={styles.actionButton}
+                  onPress={() => handleDislike(post)}
+                >
+                  <Ionicons 
+                    name="thumbs-down" 
+                    size={20} 
+                    color={post.isDisliked ? colors.negative : colors.neutral} 
+                  />
+                </TouchableOpacity>
               </View>
             </View>
           </View>
-          
-          <View style={styles.commentsSection}>
-            <Text style={styles.commentsSectionTitle}>
-              {comments.length > 0 
-                ? `Comments (${comments.length})` 
-                : 'No comments yet'}
+        </View>
+      </View>
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity style={styles.backButton} onPress={handleBackPress}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Post</Text>
+          <View style={styles.headerPlaceholder} />
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.button} />
+          <Text style={[styles.loadingText, { color: colors.neutral }]}>Loading post...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBackPress}>
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Post</Text>
+        <View style={styles.headerPlaceholder} />
+      </View>
+      
+      <ScrollView
+        style={styles.scrollContainer}
+        ref={scrollViewRef}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Main post */}
+        {mainPost && renderPost(mainPost)}
+        
+        {/* Replies heading if there are replies */}
+        {replies.length > 0 && (
+          <View style={[styles.repliesHeader, { borderBottomColor: colors.border, backgroundColor: colors.card }]}>
+            <Text style={[styles.repliesHeaderText, { color: colors.text }]}>
+              {replies.length} {replies.length === 1 ? 'Reply' : 'Replies'}
             </Text>
           </View>
-          
-          {isLoadingComments ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#1DB954" />
-              <Text style={styles.loadingText}>Loading comments...</Text>
-            </View>
-          ) : (
-            <FlatList
-              ref={commentsScrollViewRef}
-              data={comments}
-              renderItem={renderCommentItem}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.commentsList}
-              onScrollToIndexFailed={info => {
-                console.log('Failed to scroll to index', info);
-                // Fallback for failed scrolling
-                setTimeout(() => {
-                  if (commentsScrollViewRef.current && comments.length > 0) {
-                    commentsScrollViewRef.current.scrollToOffset({ offset: 0, animated: true });
-                  }
-                }, 100);
-              }}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <Ionicons name="chatbubble-outline" size={48} color="#B3B3B3" />
-                  <Text style={styles.emptyText}>No comments yet. Be the first to comment!</Text>
-                </View>
-              }
-            />
-          )}
-          
-          <View style={styles.footer}>
-            <TouchableOpacity 
-              style={styles.addCommentButton}
-              onPress={handleAddComment}
-            >
-              <Ionicons name="chatbubble-outline" size={20} color="white" />
-              <Text style={styles.addCommentButtonText}>Add a comment</Text>
-            </TouchableOpacity>
-          </View>
-        </>
-      )}
+        )}
+        
+        {/* Replies list */}
+        {replies.map(reply => (
+          <React.Fragment key={reply.id}>
+            {renderPost(reply, true)}
+          </React.Fragment>
+        ))}
+      </ScrollView>
       
-      {/* Comment Modal */}
-      <CommentModal
-        visible={commentModalVisible}
-        onClose={() => setCommentModalVisible(false)}
-        onSubmit={handleCommentSubmit}
-        postId={selectedPost?.id || ''}
-        title="Add Comment"
-      />
+      {/* Reply button */}
+      <TouchableOpacity 
+        style={[styles.floatingActionButton, { backgroundColor: colors.button }]}
+        onPress={() => handleReplyButtonPress(mainPost!)}
+      >
+        <Ionicons name="chatbubble-outline" size={24} color={colors.background} />
+      </TouchableOpacity>
       
-      {/* Reply Modal */}
-      <CommentModal
+      {/* Reply modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
         visible={replyModalVisible}
-        onClose={() => setReplyModalVisible(false)}
-        onSubmit={handleReplySubmit}
-        postId={selectedPost?.id || ''}
-        title="Reply to Comment"
-      />
+        onRequestClose={() => setReplyModalVisible(false)}
+      >
+        <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0, 0, 0, 0.5)' }]}>
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}
+          >
+            {/* Reply input area */}
+            <View style={[styles.replyInputContainer, { 
+              borderTopColor: colors.border,
+              backgroundColor: colors.background 
+            }]}>
+              <View style={styles.replyInputHeader}>
+                <TouchableOpacity 
+                  onPress={() => setReplyModalVisible(false)}
+                  style={styles.modalCloseButton}
+                >
+                  <Text style={[styles.modalCloseText, { color: colors.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[
+                    styles.postButton,
+                    { backgroundColor: colors.button },
+                    (isPosting || !replyContent.trim()) && styles.postButtonDisabled
+                  ]}
+                  onPress={handleSubmitReply}
+                  disabled={isPosting || !replyContent.trim()}
+                >
+                  <Text style={[styles.postButtonText, { color: colors.background }]}>Reply</Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.compositionArea}>
+                <Image
+                  source={require('@/assets/images/default_pfp.jpg')}
+                  style={styles.profileImage}
+                />
+                <TextInput
+                  style={[styles.postInput, { 
+                    color: colors.text,
+                    backgroundColor: colors.card,
+                    borderColor: colors.border,
+                    borderWidth: 1,
+                    borderRadius: 8
+                  }]}
+                  placeholder="Write your reply..."
+                  placeholderTextColor={colors.neutral}
+                  multiline
+                  value={replyContent}
+                  onChangeText={setReplyContent}
+                  autoFocus
+                  maxLength={280}
+                />
+              </View>
+              
+              {isPosting && (
+                <View style={styles.postingIndicator}>
+                  <ActivityIndicator size="small" color={colors.button} />
+                  <Text style={[styles.postingText, { color: colors.text }]}>Posting reply...</Text>
+                </View>
+              )}
+              
+              <View style={styles.characterCountContainer}>
+                <Text style={[
+                  styles.characterCount,
+                  { color: colors.text },
+                  replyContent.length > 260 && { color: colors.negative },
+                  replyContent.length >= 280 && { color: colors.negative }
+                ]}>
+                  {280 - replyContent.length}
+                </Text>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -470,7 +495,6 @@ export default function PostScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
   },
   header: {
     flexDirection: 'row',
@@ -479,7 +503,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#282828',
   },
   backButton: {
     width: 40,
@@ -490,10 +513,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: 'white',
   },
   headerPlaceholder: {
     width: 40,
+  },
+  scrollContainer: {
+    flex: 1,
   },
   loadingContainer: {
     flex: 1,
@@ -501,18 +526,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    color: '#B3B3B3',
     marginTop: 10,
   },
   postContainer: {
     borderBottomWidth: 1,
-    borderBottomColor: '#282828',
+  },
+  replyContainer: {
+    marginLeft: 20, // Indentation for replies
   },
   post: {
     flexDirection: 'row',
     padding: 16,
   },
-  postProfileImage: {
+  profileImage: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -524,40 +550,45 @@ const styles = StyleSheet.create({
   postHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
+  userInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
   username: {
-    color: 'white',
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '600',
     marginRight: 4,
   },
   handle: {
-    color: '#B3B3B3',
     fontSize: 14,
     marginRight: 4,
   },
   timestamp: {
-    color: '#B3B3B3',
     fontSize: 14,
   },
+  moreButton: {
+    padding: 4,
+  },
   postText: {
-    color: 'white',
     fontSize: 16,
     marginBottom: 12,
+    lineHeight: 22,
   },
   postActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 6,
   },
   actionText: {
-    color: '#B3B3B3',
     fontSize: 14,
     marginLeft: 4,
   },
@@ -568,148 +599,122 @@ const styles = StyleSheet.create({
     minWidth: 100,
   },
   voteText: {
-    color: '#B3B3B3',
     fontSize: 16,
     fontWeight: '600',
     marginHorizontal: 8,
     minWidth: 30,
     textAlign: 'center',
   },
-  positiveVote: {
-    color: '#1DB954',
-  },
-  negativeVote: {
-    color: '#FF4444',
-  },
-  commentsSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#282828',
-  },
-  commentsSectionTitle: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  commentsList: {
-    flexGrow: 1,
-  },
-  commentItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#282828',
-  },
-  highlightedComment: {
-    backgroundColor: '#282828',
-  },
-  commentHeader: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  commentProfileImage: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 10,
-  },
-  commentUserInfo: {
+  viewRepliesButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 8,
     marginBottom: 4,
   },
-  commentUsername: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginRight: 4,
-  },
-  commentHandle: {
-    color: '#B3B3B3',
+  viewRepliesText: {
     fontSize: 14,
     marginRight: 4,
   },
-  commentTimestamp: {
-    color: '#B3B3B3',
-    fontSize: 14,
-  },
-  commentContent: {
-    color: 'white',
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  commentActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-    width: '90%',
-  },
-  commentActionButton: {
-    flexDirection: 'row',
+  floatingActionButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  commentActionText: {
-    color: '#B3B3B3',
-    fontSize: 14,
-    marginLeft: 4,
+  repliesHeader: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
   },
-  commentVoteContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  commentVoteText: {
-    color: '#B3B3B3',
+  repliesHeaderText: {
     fontSize: 16,
     fontWeight: '600',
-    marginHorizontal: 6,
-    minWidth: 20,
-    textAlign: 'center',
   },
-  repliesContainer: {
-    marginLeft: 10,
-    borderLeftWidth: 1,
-    borderLeftColor: '#282828',
-    paddingLeft: 10,
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
   },
-  replyItem: {
+  originalPostPreview: {
+    padding: 16,
+    borderBottomWidth: 1,
+    maxHeight: '40%',
+  },
+  originalPostHeader: {
     flexDirection: 'row',
-    marginTop: 8,
-    paddingBottom: 8,
+    alignItems: 'flex-start',
   },
-  replyProfileImage: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+  originalPostUsername: {
+    fontSize: 16,
+    fontWeight: '600',
     marginRight: 8,
   },
-  emptyContainer: {
-    padding: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
+  originalPostContent: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 22,
   },
-  emptyText: {
-    color: '#B3B3B3',
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  footer: {
+  replyInputContainer: {
     borderTopWidth: 1,
-    borderTopColor: '#282828',
-    padding: 16,
-    paddingBottom: 24,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    marginTop: 250,
   },
-  addCommentButton: {
+  replyInputHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalCloseText: {
+    fontSize: 16,
+  },
+  postButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  postButtonDisabled: {
+    opacity: 0.5,
+  },
+  postButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  compositionArea: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 16,
+    paddingTop: 0,
+  },
+  postInput: {
+    flex: 1,
+    fontSize: 16,
+    padding: 12,
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  postingIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1DB954',
-    padding: 12,
-    borderRadius: 25,
+    padding: 16,
   },
-  addCommentButtonText: {
-    color: 'white',
+  postingText: {
     fontSize: 16,
-    fontWeight: '600',
     marginLeft: 8,
+  },
+  characterCountContainer: {
+    padding: 16,
+  },
+  characterCount: {
+    fontSize: 14,
   },
 }); 

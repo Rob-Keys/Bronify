@@ -1,41 +1,61 @@
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, Pressable, Alert } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, Pressable, Alert, TextInput, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
-import { Post, Comment, getUserComments } from '@/app/services/socialService';
+import { Post } from '@/app/services/types';
+import { getPostComments } from '@/app/services/commentService';
 import { useSocial } from '@/app/context/SocialContext';
+import { useTheme } from '@/app/context/ThemeContext';
+import { useMusic } from '@/app/context/MusicContext';
 
 interface Song {
-  id: string;
+  id: number;
   title: string;
   artist: string;
-  duration?: string;
+  image: any;
+  audio: any;
+  duration?: number;
+  isLiked?: boolean;
+  progress?: number;
+  isPlaying?: boolean;
 }
 
 const playlists = [
-  { id: 1, name: 'Playlist 1', image: require('@/assets/images/default_playlist.png') },
-  { id: 2, name: 'Playlist 2', image: require('@/assets/images/default_playlist.png') },
-  { id: 3, name: 'Playlist 3', image: require('@/assets/images/default_playlist.png') },
-  { id: 4, name: 'Playlist 4', image: require('@/assets/images/default_playlist.png') },
+  { id: 1, name: 'Playlist 1', image: require('@/assets/images/default_playlist.png'), songs: 12 },
+  { id: 2, name: 'Playlist 2', image: require('@/assets/images/default_playlist.png'), songs: 8 },
+  { id: 3, name: 'Playlist 3', image: require('@/assets/images/default_playlist.png'), songs: 15 },
+  { id: 4, name: 'Playlist 4', image: require('@/assets/images/default_playlist.png'), songs: 10 },
 ];
 
 const songs = [
-  { id: 1, title: 'Song 1', artist: 'Artist 1', image: require('@/assets/images/default_song.jpg') },
-  { id: 2, title: 'Song 2', artist: 'Artist 2', image: require('@/assets/images/default_song.jpg') },
-  { id: 3, title: 'Song 3', artist: 'Artist 3', image: require('@/assets/images/default_song.jpg') },
-  { id: 4, title: 'Song 4', artist: 'Artist 4', image: require('@/assets/images/default_song.jpg') },
+  { id: '1', title: 'Song 1', artist: 'Artist 1', image: require('@/assets/images/default_song.jpg') },
+  { id: '2', title: 'Song 2', artist: 'Artist 2', image: require('@/assets/images/default_song.jpg') },
+  { id: '3', title: 'Song 3', artist: 'Artist 3', image: require('@/assets/images/default_song.jpg') },
+  { id: '4', title: 'Song 4', artist: 'Artist 4', image: require('@/assets/images/default_song.jpg') },
 ];
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const { posts, likePost, repostPost, likeComment, dislikeComment, getPostComments } = useSocial();
+  const { colors } = useTheme();
+  const { 
+    posts,
+    togglePostLike,
+    togglePostDislike 
+  } = useSocial();
+  const {
+    playlists,
+    likedSongs,
+    removeFromPlaylist,
+    toggleLike,
+    deletePlaylist,
+    updatePlaylistName
+  } = useMusic();
   
   const [activeTab, setActiveTab] = useState('library');
   const [userPosts, setUserPosts] = useState<Post[]>([]);
-  const [userComments, setUserComments] = useState<{comment: Comment, postId: string}[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -49,11 +69,7 @@ export default function ProfileScreen() {
       // Filter posts created by the current user (using @lebronfan as user handle)
       const currentUserPosts = posts.filter(post => post.handle === '@lebronfan');
       
-      // Get comments made by the current user
-      const comments = await getUserComments('@lebronfan');
-      
       setUserPosts(currentUserPosts);
-      setUserComments(comments);
     } catch (error) {
       console.error('Error loading user content:', error);
       Alert.alert('Error', 'Failed to load your content. Please try again.');
@@ -65,40 +81,21 @@ export default function ProfileScreen() {
   const handleVote = async (postId: string, isUpvote: boolean) => {
     try {
       if (isUpvote) {
-        await likePost(postId);
+        await togglePostLike(postId);
       } else {
-        await repostPost(postId);
+        await togglePostDislike(postId);
       }
-
-      // User posts will be updated automatically via the effect hook
     } catch (error) {
       console.error('Error voting on post:', error);
       Alert.alert('Error', 'Failed to vote on post. Please try again.');
     }
   };
 
-  const handleCommentLike = async (postId: string, commentId: string) => {
-    try {
-      await likeComment(postId, commentId);
-      
-      // Reload user data to see updated comments
-      loadUserContent();
-    } catch (error) {
-      console.error('Error liking comment:', error);
-      Alert.alert('Error', 'Failed to like comment. Please try again.');
-    }
-  };
-
-  const handleCommentDislike = async (postId: string, commentId: string) => {
-    try {
-      await dislikeComment(postId, commentId);
-      
-      // Reload user data to see updated comments
-      loadUserContent();
-    } catch (error) {
-      console.error('Error disliking comment:', error);
-      Alert.alert('Error', 'Failed to dislike comment. Please try again.');
-    }
+  const handlePlaylistPress = (playlistId: number) => {
+    router.push({
+      pathname: '/playlist',
+      params: { playlistId: playlistId.toString() }
+    });
   };
 
   const handleSongPress = (song: Song) => {
@@ -108,51 +105,121 @@ export default function ProfileScreen() {
     });
   };
 
+  const handleRemoveFromPlaylist = (playlistId: number, songId: number) => {
+    Alert.alert(
+      'Remove Song',
+      'Are you sure you want to remove this song from the playlist?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            removeFromPlaylist(playlistId, songId);
+            Alert.alert('Success', 'Song removed from playlist');
+          }
+        }
+      ]
+    );
+  };
+
   const handleSettingsPress = () => {
     router.push('/settings');
   };
 
-  const handleViewPostWithComments = async (postId: string, commentId: string) => {
-    try {
-      // Find the post in the global state
-      const post = posts.find(p => p.id === postId);
-      
-      if (!post) {
-        Alert.alert('Error', 'This post could not be found.');
-        return;
-      }
-      
-      // Navigate to the social tab and open comments for this post
-      router.push({
-        pathname: '/(tabs)/social',
-        params: { 
-          viewComments: postId,
-          commentId: commentId
+  const likePost = async (postId: string) => {
+    await togglePostLike(postId);
+  };
+
+  const handleUnlikeSong = (song: Song) => {
+    Alert.alert(
+      'Remove from Liked Songs',
+      'Are you sure you want to remove this song from your liked songs?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            toggleLike(song);
+            Alert.alert('Success', 'Song removed from liked songs');
+          }
         }
-      });
-    } catch (error) {
-      console.error('Error navigating to post:', error);
-      Alert.alert('Error', 'Could not view the original post.');
-    }
+      ]
+    );
+  };
+
+  const handleEditPlaylistName = (playlistId: number, currentName: string) => {
+    Alert.prompt(
+      'Edit Playlist Name',
+      'Enter a new name for your playlist',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Save',
+          onPress: (newName) => {
+            if (newName && newName.trim()) {
+              updatePlaylistName(playlistId, newName.trim());
+              Alert.alert('Success', 'Playlist name updated');
+            }
+          }
+        }
+      ],
+      'plain-text',
+      currentName
+    );
+  };
+
+  const handleDeletePlaylist = (playlistId: number, playlistName: string) => {
+    Alert.alert(
+      'Delete Playlist',
+      `Are you sure you want to delete "${playlistName}"? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            deletePlaylist(playlistId);
+            Alert.alert('Success', 'Playlist deleted');
+          }
+        }
+      ]
+    );
   };
 
   const renderPost = (post: Post) => (
-    <View key={post.id} style={styles.post}>
+    <View key={post.id} style={[styles.post, { borderBottomColor: colors.border }]}>
       <Image 
         source={require('@/assets/images/default_pfp.jpg')} 
         style={styles.postProfileImage} 
       />
       <View style={styles.postContent}>
         <View style={styles.postHeader}>
-          <Text style={styles.username}>{post.username}</Text>
-          <Text style={styles.handle}>{post.handle}</Text>
-          <Text style={styles.timestamp}>· {post.timestamp}</Text>
+          <Text style={[styles.username, { color: colors.text }]}>{post.username}</Text>
+          <Text style={[styles.handle, { color: colors.neutral }]}>{post.handle}</Text>
+          <Text style={[styles.postTimestamp, { color: colors.neutral }]}>· {post.timestamp}</Text>
         </View>
-        <Text style={styles.postText}>{post.content}</Text>
+        <Text style={[styles.postText, { color: colors.text }]}>{post.content}</Text>
         <View style={styles.postActions}>
           <View style={styles.actionButton}>
-            <Ionicons name="chatbubble-outline" size={20} color="#B3B3B3" />
-            <Text style={styles.actionText}>{post.comments}</Text>
+            <Ionicons name="chatbubble-outline" size={20} color={colors.neutral} />
+            <Text style={[styles.actionText, { color: colors.neutral }]}>
+              {post.comments}
+              {post.comments > post.commentsList.length && ` (${post.commentsList.length} + ${post.comments - post.commentsList.length})`}
+            </Text>
           </View>
           <View style={styles.voteContainer}>
             <TouchableOpacity 
@@ -162,14 +229,15 @@ export default function ProfileScreen() {
               <Ionicons 
                 name="thumbs-up" 
                 size={20} 
-                color={post.isLiked ? "#1DB954" : "#B3B3B3"} 
+                color={post.isLiked ? colors.positive : colors.neutral} 
               />
             </TouchableOpacity>
             <Text style={[
               styles.voteText,
-              (post.likes - post.reposts) > 0 && styles.positiveVote,
-              (post.likes - post.reposts) < 0 && styles.negativeVote
-            ]}>{post.likes - post.reposts}</Text>
+              { color: colors.neutral },
+              (post.likes - post.dislikes) > 0 && { color: colors.positive },
+              (post.likes - post.dislikes) < 0 && { color: colors.negative }
+            ]}>{post.likes - post.dislikes}</Text>
             <TouchableOpacity 
               style={styles.actionButton}
               onPress={() => handleVote(post.id, false)}
@@ -177,160 +245,204 @@ export default function ProfileScreen() {
               <Ionicons 
                 name="thumbs-down" 
                 size={20} 
-                color={post.isReposted ? "#FF4444" : "#B3B3B3"} 
+                color={post.isDisliked ? colors.negative : colors.neutral} 
               />
             </TouchableOpacity>
           </View>
         </View>
       </View>
     </View>
-  );
-
-  const renderComment = (commentData: {comment: Comment, postId: string}) => (
-    <TouchableOpacity 
-      key={commentData.comment.id} 
-      style={styles.commentItem}
-      onPress={() => handleViewPostWithComments(commentData.postId, commentData.comment.id)}
-    >
-      <Image 
-        source={require('@/assets/images/default_pfp.jpg')} 
-        style={styles.commentProfileImage} 
-      />
-      <View style={styles.commentContent}>
-        <View style={styles.postHeader}>
-          <Text style={styles.username}>{commentData.comment.username}</Text>
-          <Text style={styles.handle}>{commentData.comment.handle}</Text>
-          <Text style={styles.timestamp}>· {commentData.comment.timestamp}</Text>
-        </View>
-        <Text style={styles.commentText}>{commentData.comment.content}</Text>
-        
-        <View style={styles.commentActions}>
-          <View style={styles.commentVoteContainer}>
-            <TouchableOpacity 
-              style={styles.commentActionButton}
-              onPress={(e) => {
-                e.stopPropagation(); // Prevent triggering the parent's onPress
-                handleCommentLike(commentData.postId, commentData.comment.id);
-              }}
-            >
-              <Ionicons 
-                name="thumbs-up" 
-                size={16} 
-                color={commentData.comment.isLiked ? "#1DB954" : "#B3B3B3"} 
-              />
-            </TouchableOpacity>
-            <Text style={[
-              styles.commentVoteText,
-              (commentData.comment.likes - commentData.comment.dislikes) > 0 && styles.positiveVote,
-              (commentData.comment.likes - commentData.comment.dislikes) < 0 && styles.negativeVote
-            ]}>{commentData.comment.likes - commentData.comment.dislikes}</Text>
-            <TouchableOpacity 
-              style={styles.commentActionButton}
-              onPress={(e) => {
-                e.stopPropagation(); // Prevent triggering the parent's onPress
-                handleCommentDislike(commentData.postId, commentData.comment.id);
-              }}
-            >
-              <Ionicons 
-                name="thumbs-down" 
-                size={16} 
-                color={commentData.comment.isDisliked ? "#FF4444" : "#B3B3B3"} 
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
-        
-        {commentData.comment.replies && commentData.comment.replies.length > 0 && (
-          <View style={styles.repliesContainer}>
-            {commentData.comment.replies.map(reply => (
-              <View key={reply.id} style={styles.replyItem}>
-                <Image 
-                  source={require('@/assets/images/default_pfp.jpg')} 
-                  style={styles.replyProfileImage} 
-                />
-                <View>
-                  <View style={styles.commentUserInfo}>
-                    <Text style={styles.commentUsername}>{reply.username}</Text>
-                    <Text style={styles.commentHandle}>{reply.handle}</Text>
-                    <Text style={styles.commentTimestamp}>· {reply.timestamp}</Text>
-                  </View>
-                  <Text style={styles.commentContent}>{reply.content}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
   );
 
   const renderLibraryContent = () => (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Your Library</Text>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Your Library</Text>
+      
       <View style={styles.librarySection}>
-        <Text style={styles.subsectionTitle}>Playlists</Text>
-        {playlists.map((playlist) => (
-          <TouchableOpacity key={playlist.id} style={styles.playlistItem}>
-            <Image source={playlist.image} style={styles.playlistImage} />
-            <View style={styles.playlistInfo}>
-              <Text style={styles.playlistName}>{playlist.name}</Text>
-              <Text style={styles.playlistSongs}>{playlist.songs} songs</Text>
+        <Text style={[styles.subsectionTitle, { color: colors.text }]}>Playlists</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {playlists.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="list" size={48} color={colors.neutral} />
+              <Text style={[styles.emptyText, { color: colors.neutral }]}>No playlists yet</Text>
             </View>
-            <Ionicons name="chevron-forward" size={24} color="#B3B3B3" />
-          </TouchableOpacity>
-        ))}
+          ) : (
+            playlists.map(playlist => (
+              <View key={playlist.id} style={styles.playlistCardContainer}>
+                <TouchableOpacity
+                  style={styles.playlistCard}
+                  onPress={() => handlePlaylistPress(playlist.id)}
+                >
+                  <Image
+                    source={require('@/assets/images/default_playlist.png')}
+                    style={styles.playlistImage}
+                  />
+                  <Text style={[styles.playlistName, { color: colors.text }]}>{playlist.name}</Text>
+                  <Text style={[styles.playlistSongCount, { color: colors.neutral }]}>
+                    {playlist.songs.length} songs
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </ScrollView>
       </View>
-
+      
       <View style={styles.librarySection}>
-        <Text style={styles.subsectionTitle}>Saved Songs</Text>
-        {songs.map((song) => (
-          <Pressable
-            key={song.id}
-            style={styles.songItem}
-            onPress={() => handleSongPress(song)}
-          >
-            <Image source={song.image} style={styles.songImage} />
-            <View style={styles.songInfo}>
-              <Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text>
-              <Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text>
-            </View>
-            <Ionicons name="play-circle" size={24} color="#1DB954" />
-          </Pressable>
-        ))}
+        <Text style={[styles.subsectionTitle, { color: colors.text }]}>Liked Songs</Text>
+        {likedSongs.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="heart" size={48} color={colors.neutral} />
+            <Text style={[styles.emptyText, { color: colors.neutral }]}>No liked songs yet</Text>
+          </View>
+        ) : (
+          likedSongs.map(song => (
+            <TouchableOpacity
+              key={song.id}
+              style={[styles.songItem, { borderBottomColor: colors.border }]}
+              onPress={() => handleSongPress(song)}
+            >
+              <Image
+                source={song.image}
+                style={styles.songImage}
+              />
+              <View style={styles.songInfo}>
+                <Text style={[styles.songTitle, { color: colors.text }]}>{song.title}</Text>
+                <Text style={[styles.songArtist, { color: colors.neutral }]}>{song.artist}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.unlikeButton}
+                onPress={() => handleUnlikeSong(song)}
+              >
+                <Ionicons name="heart" size={24} color="#FF4B4B" />
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))
+        )}
       </View>
     </View>
   );
 
-  const renderPostsContent = () => (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Your Posts</Text>
-      {userPosts.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="newspaper-outline" size={48} color="#B3B3B3" />
-          <Text style={styles.emptyText}>You haven't posted anything yet</Text>
-        </View>
-      ) : (
-        <View style={styles.postsContainer}>
-          {userPosts.map(post => renderPost(post))}
-        </View>
-      )}
+  const renderPostsContent = () => {
+    // Function to recursively find all comments by the user
+    const findUserComments = (posts: Post[]): Post[] => {
+      let userComments: Post[] = [];
+      
+      posts.forEach(post => {
+        // Check if this post is a comment by the user
+        if (post.isComment && post.handle === '@lebronfan') {
+          userComments.push(post);
+        }
+        
+        // Recursively check comments in this post's commentsList
+        if (post.commentsList && post.commentsList.length > 0) {
+          userComments = userComments.concat(findUserComments(post.commentsList));
+        }
+      });
+      
+      return userComments;
+    };
 
-      <Text style={[styles.sectionTitle, {marginTop: 40}]}>Your Comments</Text>
-      {userComments.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="chatbubble-outline" size={48} color="#B3B3B3" />
-          <Text style={styles.emptyText}>You haven't commented on any posts yet</Text>
-        </View>
-      ) : (
-        <View style={styles.postsContainer}>
-          {userComments.map(commentData => renderComment(commentData))}
-        </View>
-      )}
-    </View>
-  );
+    // Get all comments made by the user
+    const userComments = findUserComments(posts);
+
+    return (
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Your Posts</Text>
+        {userPosts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="chatbubble-outline" size={48} color={colors.neutral} />
+            <Text style={[styles.emptyText, { color: colors.neutral }]}>You haven't posted anything yet.</Text>
+          </View>
+        ) : (
+          userPosts.map(post => (
+            <TouchableOpacity 
+              key={post.id} 
+              onPress={() => router.push({
+                pathname: '/post',
+                params: { postId: post.id }
+              })}
+            >
+              {renderPost(post)}
+            </TouchableOpacity>
+          ))
+        )}
+
+        <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 24 }]}>Your Replies</Text>
+        {userComments.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="chatbubble-outline" size={48} color={colors.neutral} />
+            <Text style={[styles.emptyText, { color: colors.neutral }]}>You haven't replied to anything yet.</Text>
+          </View>
+        ) : (
+          userComments.map(comment => (
+            <TouchableOpacity 
+              key={comment.id}
+              onPress={() => router.push({
+                pathname: '/post',
+                params: { postId: comment.parentId }
+              })}
+            >
+              <View style={[styles.post, { borderBottomColor: colors.border }]}>
+                <Image 
+                  source={require('@/assets/images/default_pfp.jpg')} 
+                  style={styles.postProfileImage} 
+                />
+                <View style={styles.postContent}>
+                  <View style={styles.postHeader}>
+                    <Text style={[styles.username, { color: colors.text }]}>{comment.username}</Text>
+                    <Text style={[styles.handle, { color: colors.neutral }]}>{comment.handle}</Text>
+                    <Text style={[styles.postTimestamp, { color: colors.neutral }]}>· {comment.timestamp}</Text>
+                  </View>
+                  <Text style={[styles.postText, { color: colors.text }]}>{comment.content}</Text>
+                  <View style={styles.postActions}>
+                    <View style={styles.actionButton}>
+                      <Ionicons name="chatbubble-outline" size={20} color={colors.neutral} />
+                      <Text style={[styles.actionText, { color: colors.neutral }]}>
+                        {comment.comments}
+                        {comment.comments > comment.commentsList.length && ` (${comment.commentsList.length} + ${comment.comments - comment.commentsList.length})`}
+                      </Text>
+                    </View>
+                    <View style={styles.voteContainer}>
+                      <TouchableOpacity 
+                        style={styles.actionButton} 
+                        onPress={() => handleVote(comment.id, true)}
+                      >
+                        <Ionicons 
+                          name="thumbs-up" 
+                          size={20} 
+                          color={comment.isLiked ? colors.positive : colors.neutral} 
+                        />
+                      </TouchableOpacity>
+                      <Text style={[
+                        styles.voteText,
+                        { color: colors.neutral },
+                        (comment.likes - comment.dislikes) > 0 && { color: colors.positive },
+                        (comment.likes - comment.dislikes) < 0 && { color: colors.negative }
+                      ]}>{comment.likes - comment.dislikes}</Text>
+                      <TouchableOpacity 
+                        style={styles.actionButton}
+                        onPress={() => handleVote(comment.id, false)}
+                      >
+                        <Ionicons 
+                          name="thumbs-down" 
+                          size={20} 
+                          color={comment.isDisliked ? colors.negative : colors.neutral} 
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+    );
+  };
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
         <View style={styles.profileInfo}>
           <Image
@@ -338,38 +450,47 @@ export default function ProfileScreen() {
             style={styles.profileImage}
           />
           <View style={styles.profileText}>
-            <Text style={styles.profileName}>User Name</Text>
-            <Text style={styles.profileEmail}>user@example.com</Text>
+            <Text style={[styles.username, { color: colors.text }]}>LeBron Fan</Text>
+            <Text style={[styles.handle, { color: colors.neutral }]}>@lebronfan</Text>
           </View>
-          <TouchableOpacity 
-            style={styles.settingsButton}
-            onPress={handleSettingsPress}
-          >
-            <Ionicons name="settings-outline" size={24} color="white" />
-          </TouchableOpacity>
         </View>
+        <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={handleSettingsPress}
+        >
+          <Ionicons name="settings-outline" size={24} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
-      <View style={styles.tabsContainer}>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'library' && styles.activeTab]} 
+      <View style={styles.tabs}>
+        <TouchableOpacity
+          style={[
+            styles.tab,
+            activeTab === 'library' && { borderBottomColor: colors.button }
+          ]}
           onPress={() => setActiveTab('library')}
         >
-          <Text style={[styles.tabText, activeTab === 'library' && styles.activeTabText]}>Library</Text>
+          <Text style={[
+            styles.tabText,
+            { color: activeTab === 'library' ? colors.button : colors.neutral }
+          ]}>Library</Text>
         </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'posts' && styles.activeTab]} 
+        <TouchableOpacity
+          style={[
+            styles.tab,
+            activeTab === 'posts' && { borderBottomColor: colors.button }
+          ]}
           onPress={() => setActiveTab('posts')}
         >
-          <Text style={[styles.tabText, activeTab === 'posts' && styles.activeTabText]}>Posts</Text>
+          <Text style={[
+            styles.tabText,
+            { color: activeTab === 'posts' ? colors.button : colors.neutral }
+          ]}>Posts</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.tabDivider} />
-
       <ScrollView style={styles.content}>
-        {activeTab === 'library' && renderLibraryContent()}
-        {activeTab === 'posts' && renderPostsContent()}
+        {activeTab === 'library' ? renderLibraryContent() : renderPostsContent()}
       </ScrollView>
     </SafeAreaView>
   );
@@ -378,16 +499,20 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    paddingTop: Platform.OS === 'ios' ? 60 : 0,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#282828',
+    paddingTop: 8,
   },
   profileInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   profileImage: {
     width: 80,
@@ -398,21 +523,30 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 16,
   },
-  profileName: {
-    fontSize: 24,
-    fontWeight: 'bold',
+  username: {
     color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
     marginBottom: 4,
   },
-  profileEmail: {
-    fontSize: 16,
+  handle: {
     color: '#B3B3B3',
+    fontSize: 16,
   },
-  settingsButton: {
-    padding: 8,
+  tabs: {
+    flexDirection: 'row',
+    paddingTop: 8,
+    width: '100%',
   },
-  content: {
+  tab: {
     flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  tabText: {
+    color: '#B3B3B3',
+    fontSize: 14,
+    fontWeight: '500',
   },
   section: {
     marginTop: 24,
@@ -434,47 +568,40 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 12,
   },
-  playlistItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
+  playlistCardContainer: {
+    marginRight: 12,
+  },
+  playlistCard: {
+    width: 140,
     backgroundColor: '#282828',
-    marginHorizontal: 16,
-    marginBottom: 8,
     borderRadius: 8,
+    padding: 8,
   },
   playlistImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 4,
-  },
-  playlistInfo: {
-    flex: 1,
-    marginLeft: 12,
+    width: '100%',
+    height: 100,
+    borderRadius: 8,
+    marginBottom: 6,
   },
   playlistName: {
     color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  playlistSongs: {
-    color: '#B3B3B3',
     fontSize: 14,
-    marginTop: 4,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  playlistSongCount: {
+    fontSize: 12,
+    color: '#B3B3B3',
   },
   songItem: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    backgroundColor: '#282828',
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderRadius: 8,
+    borderBottomWidth: 1,
   },
   songImage: {
-    width: 56,
-    height: 56,
-    backgroundColor: '#282828',
+    width: 50,
+    height: 50,
     borderRadius: 4,
     marginRight: 12,
   },
@@ -484,46 +611,20 @@ const styles = StyleSheet.create({
   songTitle: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
+    marginBottom: 4,
   },
   songArtist: {
     color: '#B3B3B3',
     fontSize: 14,
-    marginTop: 4,
   },
-  tabsContainer: {
-    flexDirection: 'row',
-    paddingTop: 8,
-    width: '100%',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#1DB954',
-  },
-  tabText: {
-    color: '#B3B3B3',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  activeTabText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  tabDivider: {
-    height: 1,
-    width: '100%',
-    backgroundColor: '#282828',
+  unlikeButton: {
+    padding: 8,
   },
   post: {
     flexDirection: 'row',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#282828',
     width: '100%',
   },
   postProfileImage: {
@@ -539,21 +640,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 4,
-  },
-  username: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginRight: 4,
-  },
-  handle: {
-    color: '#B3B3B3',
-    fontSize: 14,
-    marginRight: 4,
-  },
-  timestamp: {
-    color: '#B3B3B3',
-    fontSize: 14,
   },
   postText: {
     color: 'white',
@@ -589,11 +675,11 @@ const styles = StyleSheet.create({
     minWidth: 30,
     textAlign: 'center',
   },
-  positiveVote: {
-    color: '#1DB954',
+  settingsButton: {
+    padding: 8,
   },
-  negativeVote: {
-    color: '#FF4444',
+  content: {
+    flex: 1,
   },
   emptyContainer: {
     padding: 30,
@@ -607,87 +693,17 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 12,
   },
-  postsContainer: {
-    width: '100%',
+  postTimestamp: {
+    fontSize: 14,
+    marginLeft: 4,
   },
-  commentItem: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#282828',
+  playlistActions: {
     flexDirection: 'row',
-  },
-  commentProfileImage: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 10,
-  },
-  commentContent: {
-    flex: 1,
-  },
-  commentText: {
-    color: 'white',
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  commentVoteContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  commentVoteText: {
-    color: '#B3B3B3',
-    fontSize: 16,
-    fontWeight: '600',
-    marginHorizontal: 6,
-    minWidth: 20,
-    textAlign: 'center',
-  },
-  commentActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 4,
-  },
-  commentActions: {
-    flexDirection: 'row',
+    justifyContent: 'flex-end',
     marginTop: 4,
   },
-  repliesContainer: {
-    marginLeft: 10,
-    borderLeftWidth: 1,
-    borderLeftColor: '#282828',
-    paddingLeft: 10,
-    marginTop: 8,
-  },
-  replyItem: {
-    flexDirection: 'row',
-    marginTop: 8,
-    paddingBottom: 8,
-  },
-  replyProfileImage: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    marginRight: 8,
-  },
-  commentUserInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  commentUsername: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginRight: 4,
-  },
-  commentHandle: {
-    color: '#B3B3B3',
-    fontSize: 14,
-    marginRight: 4,
-  },
-  commentTimestamp: {
-    color: '#B3B3B3',
-    fontSize: 14,
+  playlistActionButton: {
+    padding: 4,
+    marginLeft: 8,
   },
 }); 

@@ -1,20 +1,20 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useColorScheme } from 'react-native';
-import { Post } from '@/app/services/socialService';
+import { Post } from '@/app/services/types';
 import { useSocial } from '@/app/context/SocialContext';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useTheme } from '@/app/context/ThemeContext';
 
 // Define sort options
 type SortOption = 'recent' | 'liked';
 
 export default function SocialScreen() {
-  const colorScheme = useColorScheme();
   const scrollViewRef = useRef<ScrollView>(null);
   const params = useLocalSearchParams();
   const router = useRouter();
+  const { colors } = useTheme();
   
   // Use the social context
   const { 
@@ -22,13 +22,16 @@ export default function SocialScreen() {
     isLoading, 
     loadPosts, 
     createPost, 
-    likePost, 
-    repostPost
+    togglePostLike,
+    togglePostDislike,
+    deletePost,
+    isCurrentUserPost
   } = useSocial();
   
   // Post modal state
   const [postModalVisible, setPostModalVisible] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
+  const [newPostContent, setNewPostContent] = useState('');
   
   // Sort state
   const [sortBy, setSortBy] = useState<SortOption>('recent');
@@ -40,8 +43,8 @@ export default function SocialScreen() {
       // Return posts as is (they are already sorted by most recent)
       return [...posts];
     } else {
-      // Sort by most liked (highest net votes: likes - reposts)
-      return [...posts].sort((a, b) => (b.likes - b.reposts) - (a.likes - a.reposts));
+      // Sort by most liked (highest net votes: likes - dislikes)
+      return [...posts].sort((a, b) => (b.likes - b.dislikes) - (a.likes - a.dislikes));
     }
   };
 
@@ -108,18 +111,18 @@ export default function SocialScreen() {
 
   const handleLike = async (postId: string) => {
     try {
-      await likePost(postId);
+      await togglePostLike(postId);
     } catch (error) {
       console.error('Error liking post:', error);
       Alert.alert('Error', 'Failed to like post. Please try again.');
     }
   };
 
-  const handleRepost = async (postId: string) => {
+  const handleDislike = async (postId: string) => {
     try {
-      await repostPost(postId);
+      await togglePostDislike(postId);
     } catch (error) {
-      console.error('Error reposting:', error);
+      console.error('Error disliking post:', error);
       Alert.alert('Error', 'Failed to dislike post. Please try again.');
     }
   };
@@ -130,23 +133,14 @@ export default function SocialScreen() {
   };
 
   const navigateToPost = (postId: string, commentId?: string) => {
-    // Navigate to the post screen with the post ID
-    const params: { [key: string]: string } = { postId };
-    
-    // Add commentId if provided
-    if (commentId) {
-      params.commentId = commentId;
-    }
-    
+    // Use router.push for consistent forward animation
     router.push({
       pathname: '/post',
-      params
+      params: { 
+        postId,
+        ...(commentId ? { commentId } : {})
+      }
     });
-  };
-
-  const handleViewComments = (postId: string) => {
-    // Navigate to the post screen to view comments
-    navigateToPost(postId);
   };
 
   const getProfileImage = (imageName: string) => {
@@ -156,163 +150,333 @@ export default function SocialScreen() {
     return require('@/assets/images/default_pfp.jpg'); // Fallback to default
   };
 
-  const renderPost = (post: Post) => (
-    <View key={post.id} style={styles.post}>
-      <Image source={getProfileImage(post.profileImage)} style={styles.postProfileImage} />
-      <View style={styles.postContent}>
-        <View style={styles.postHeader}>
-          <Text style={styles.username}>{post.username}</Text>
-          <Text style={styles.handle}>{post.handle}</Text>
-          <Text style={styles.timestamp}>· {post.timestamp}</Text>
-        </View>
-        <TouchableOpacity onPress={() => navigateToPost(post.id)}>
-          <Text style={styles.postText}>{post.content}</Text>
-        </TouchableOpacity>
-        <View style={styles.postActions}>
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => handleCommentPress(post.id)}
-          >
-            <Ionicons name="chatbubble-outline" size={20} color="#B3B3B3" />
-            <Text style={styles.actionText}>{post.comments}</Text>
-          </TouchableOpacity>
-          <View style={styles.voteContainer}>
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={() => handleLike(post.id)}
-            >
-              <Ionicons 
-                name="thumbs-up" 
-                size={20} 
-                color={post.isLiked ? "#1DB954" : "#B3B3B3"} 
-              />
-            </TouchableOpacity>
-            <Text style={[
-              styles.voteText,
-              (post.likes - post.reposts) > 0 && styles.positiveVote,
-              (post.likes - post.reposts) < 0 && styles.negativeVote
-            ]}>{post.likes - post.reposts}</Text>
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={() => handleRepost(post.id)}
-            >
-              <Ionicons 
-                name="thumbs-down" 
-                size={20} 
-                color={post.isReposted ? "#FF4444" : "#B3B3B3"} 
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
-        
-        {post.comments > 0 && (
-          <TouchableOpacity 
-            style={styles.viewCommentsButton}
-            onPress={() => handleViewComments(post.id)}
-          >
-            <Text style={styles.viewCommentsText}>
-              View {post.comments} {post.comments === 1 ? 'comment' : 'comments'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
+  const handleDeletePost = async (postId: string) => {
+    Alert.alert(
+      "Delete Post",
+      "Are you sure you want to delete this post? This action cannot be undone.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deletePost(postId);
+              Alert.alert("Success", "Post deleted successfully");
+            } catch (error) {
+              console.error('Error deleting post:', error);
+              Alert.alert('Error', 'Failed to delete post. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  };
 
-  return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Social Feed</Text>
-        <View style={styles.sortContainer}>
-          <TouchableOpacity
-            style={styles.sortButton}
-            onPress={handleToggleSortMenu}
-          >
-            <Text style={styles.sortButtonText}>
-              {sortBy === 'recent' ? 'Most Recent' : 'Most Liked'}
-            </Text>
-            <Ionicons name="chevron-down" size={16} color="#B3B3B3" />
+  const getTotalRepliesCount = (post: Post): number => {
+    // Check if commentsList exists and is an array
+    if (!post.commentsList || !Array.isArray(post.commentsList)) {
+      return 0;
+    }
+    
+    // Count all comments recursively
+    const countCommentsRecursively = (comments: Post[]): number => {
+      return comments.reduce((total, comment) => {
+        // Count this comment
+        let count = 1;
+        
+        // Count nested comments if they exist
+        if (comment.commentsList && comment.commentsList.length > 0) {
+          count += countCommentsRecursively(comment.commentsList);
+        }
+        
+        return total + count;
+      }, 0);
+    };
+    
+    return countCommentsRecursively(post.commentsList);
+  };
+
+  const renderPost = (post: Post) => {
+    const totalRepliesCount = getTotalRepliesCount(post);
+    
+    return (
+      <View 
+        style={[
+          styles.post, 
+          { borderBottomColor: colors.border }
+        ]}
+      >
+        <Image source={getProfileImage(post.profileImage)} style={styles.postProfileImage} />
+        <View style={styles.postContent}>
+          <View style={styles.postHeader}>
+            <View style={styles.userInfo}>
+              <Text style={[styles.username, { color: colors.text }]}>{post.username}</Text>
+              <Text style={[styles.handle, { color: colors.neutral }]}>{post.handle}</Text>
+              <Text style={[styles.timestamp, { color: colors.neutral }]}>· {post.timestamp}</Text>
+            </View>
+          </View>
+          
+          <TouchableOpacity onPress={() => navigateToPost(post.id)}>
+            <Text style={[styles.postText, { color: colors.text }]}>{post.content}</Text>
           </TouchableOpacity>
           
-          {sortMenuVisible && (
-            <View style={styles.sortMenu}>
-              <TouchableOpacity
-                style={[
-                  styles.sortOption,
-                  sortBy === 'recent' && styles.selectedSortOption
-                ]}
-                onPress={() => handleChangeSort('recent')}
+          <View style={styles.postActions}>
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => handleCommentPress(post.id)}
+            >
+              <Ionicons name="chatbubble-outline" size={20} color={colors.neutral} />
+              <Text style={[styles.actionText, { color: colors.neutral }]}>
+                {totalRepliesCount > 0 ? `${totalRepliesCount} ${totalRepliesCount === 1 ? 'Reply' : 'Replies'}` : 'Reply'}
+              </Text>
+            </TouchableOpacity>
+            
+            <View style={styles.voteContainer}>
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => handleLike(post.id)}
               >
-                <Text style={[
-                  styles.sortOptionText,
-                  sortBy === 'recent' && styles.selectedSortOptionText
-                ]}>
-                  Most Recent
-                </Text>
-                {sortBy === 'recent' && (
-                  <Ionicons name="checkmark" size={16} color="#1DB954" />
-                )}
+                <Ionicons 
+                  name="thumbs-up" 
+                  size={20} 
+                  color={post.isLiked ? colors.positive : colors.neutral} 
+                />
               </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[
-                  styles.sortOption,
-                  sortBy === 'liked' && styles.selectedSortOption
-                ]}
-                onPress={() => handleChangeSort('liked')}
+              <Text style={[
+                styles.voteText,
+                { color: colors.neutral },
+                (post.likes - post.dislikes) > 0 && { color: colors.positive },
+                (post.likes - post.dislikes) < 0 && { color: colors.negative }
+              ]}>
+                {post.likes - post.dislikes}
+              </Text>
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={() => handleDislike(post.id)}
               >
-                <Text style={[
-                  styles.sortOptionText,
-                  sortBy === 'liked' && styles.selectedSortOptionText
-                ]}>
-                  Most Liked
-                </Text>
-                {sortBy === 'liked' && (
-                  <Ionicons name="checkmark" size={16} color="#1DB954" />
-                )}
+                <Ionicons 
+                  name="thumbs-down" 
+                  size={20} 
+                  color={post.isDisliked ? colors.negative : colors.neutral} 
+                />
               </TouchableOpacity>
             </View>
-          )}
+          </View>
         </View>
       </View>
+    );
+  };
 
-      <ScrollView 
-        style={styles.content}
-        ref={scrollViewRef}
-        showsVerticalScrollIndicator={false}
-      >
-        <TouchableOpacity style={styles.newPostContainer} onPress={handleOpenPostModal}>
-          <Image
-            source={require('@/assets/images/default_pfp.jpg')}
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>The Finals</Text>
+        <TouchableOpacity style={styles.sortButton} onPress={handleToggleSortMenu}>
+          <Ionicons name="filter" size={20} color={colors.text} />
+          <Text style={[styles.sortButtonText, { color: colors.text }]}>
+            {sortBy === 'recent' ? 'Most Recent' : 'Most Liked'}
+          </Text>
+          <Ionicons name="chevron-down" size={18} color={colors.text} />
+        </TouchableOpacity>
+        {sortMenuVisible && (
+          <View style={[styles.sortMenu, { 
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            shadowColor: colors.text
+          }]}>
+            <TouchableOpacity 
+              style={[
+                styles.sortOption,
+                sortBy === 'recent' && { backgroundColor: `${colors.button}20` }
+              ]}
+              onPress={() => handleChangeSort('recent')}
+            >
+              <Text 
+                style={[
+                  styles.sortOptionText, 
+                  { color: colors.text },
+                  sortBy === 'recent' && { color: colors.button }
+                ]}
+              >
+                Most Recent
+              </Text>
+              {sortBy === 'recent' && (
+                <Ionicons name="checkmark" size={18} color={colors.button} />
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[
+                styles.sortOption,
+                sortBy === 'liked' && { backgroundColor: `${colors.button}20` }
+              ]}
+              onPress={() => handleChangeSort('liked')}
+            >
+              <Text 
+                style={[
+                  styles.sortOptionText, 
+                  { color: colors.text },
+                  sortBy === 'liked' && { color: colors.button }
+                ]}
+              >
+                Most Liked
+              </Text>
+              {sortBy === 'liked' && (
+                <Ionicons name="checkmark" size={18} color={colors.button} />
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+      
+      <View style={styles.content}>
+        <TouchableOpacity 
+          style={[styles.newPostContainer, { borderBottomColor: colors.border }]}
+          onPress={handleOpenPostModal}
+        >
+          <Image 
+            source={require('@/assets/images/default_pfp.jpg')} 
             style={styles.profileImage}
           />
-          <View style={styles.newPostInputContainer}>
-            <Text style={styles.newPostPlaceholder}>What's on your mind?</Text>
+          <View style={[styles.newPostInputContainer, { 
+            backgroundColor: colors.card,
+            borderColor: colors.border, 
+            borderWidth: 1
+          }]}>
+            <Text style={[styles.newPostPlaceholder, { color: colors.neutral }]}>What's happening?</Text>
           </View>
         </TouchableOpacity>
 
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#1DB954" />
-            <Text style={styles.loadingText}>Loading posts...</Text>
-          </View>
-        ) : posts.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="newspaper-outline" size={48} color="#B3B3B3" />
-            <Text style={styles.emptyText}>No posts yet. Be the first to post!</Text>
-          </View>
-        ) : (
-          getSortedPosts().map((post) => renderPost(post))
-        )}
-      </ScrollView>
-    </SafeAreaView>
+        <ScrollView 
+          ref={scrollViewRef}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={isLoading || posts.length === 0 ? { flex: 1 } : undefined}
+        >
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.button} />
+              <Text style={[styles.loadingText, { color: colors.neutral }]}>Loading posts...</Text>
+            </View>
+          ) : posts.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="chatbubble-outline" size={50} color={colors.neutral} />
+              <Text style={[styles.emptyText, { color: colors.neutral }]}>
+                No posts yet. Be the first to share your thoughts!
+              </Text>
+            </View>
+          ) : (
+            getSortedPosts().map(post => (
+              <React.Fragment key={post.id}>
+                {renderPost(post)}
+              </React.Fragment>
+            ))
+          )}
+        </ScrollView>
+
+        <TouchableOpacity 
+          style={[styles.floatingActionButton, { 
+            backgroundColor: colors.button,
+            shadowColor: colors.text
+          }]}
+          onPress={handleOpenPostModal}
+        >
+          <Ionicons name="create" size={24} color={colors.background} />
+        </TouchableOpacity>
+      </View>
+
+      {/* New Post Modal */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={postModalVisible}
+        onRequestClose={() => setPostModalVisible(false)}
+      >
+        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}
+          >
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+              <TouchableOpacity 
+                onPress={() => {
+                  setPostModalVisible(false);
+                  setNewPostContent('');
+                }}
+                style={styles.modalCloseButton}
+              >
+                <Text style={[styles.modalCloseText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[
+                  styles.postButton,
+                  { backgroundColor: colors.button },
+                  (isPosting || !newPostContent.trim()) && styles.postButtonDisabled
+                ]}
+                onPress={async () => {
+                  await handleCreatePost(newPostContent);
+                  setPostModalVisible(false);
+                  setNewPostContent('');
+                }}
+                disabled={isPosting || !newPostContent.trim()}
+              >
+                <Text style={[styles.postButtonText, { color: colors.background }]}>Post</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.compositionArea}>
+              <Image
+                source={require('@/assets/images/default_pfp.jpg')}
+                style={styles.profileImage}
+              />
+              <TextInput
+                style={[styles.postInput, { 
+                  color: colors.text, 
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderWidth: 1,
+                  borderRadius: 8
+                }]}
+                placeholder="What's happening?"
+                placeholderTextColor={colors.neutral}
+                multiline
+                value={newPostContent}
+                onChangeText={setNewPostContent}
+                autoFocus
+                maxLength={280}
+              />
+            </View>
+            
+            {isPosting && (
+              <View style={styles.postingIndicator}>
+                <ActivityIndicator size="small" color={colors.button} />
+                <Text style={[styles.postingText, { color: colors.text }]}>Posting...</Text>
+              </View>
+            )}
+            
+            <View style={styles.characterCountContainer}>
+              <Text style={[
+                styles.characterCount,
+                { color: colors.text },
+                newPostContent.length > 260 && { color: colors.negative },
+                newPostContent.length >= 280 && { color: colors.negative }
+              ]}>
+                {280 - newPostContent.length}
+              </Text>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    paddingTop: Platform.OS === 'ios' ? 60 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -320,34 +484,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#282828',
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: 'white',
-  },
-  sortContainer: {
-    position: 'relative',
   },
   sortButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#282828',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 15,
+    gap: 6,
   },
   sortButtonText: {
-    color: 'white',
     fontSize: 14,
-    marginRight: 4,
+    fontWeight: '500',
   },
   sortMenu: {
     position: 'absolute',
-    top: 40,
+    top: 55,
     right: 0,
-    backgroundColor: '#282828',
     width: 150,
     borderRadius: 10,
     elevation: 5,
@@ -421,11 +575,17 @@ const styles = StyleSheet.create({
   postHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
+  },
+  userInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
   },
   username: {
     color: 'white',
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '600',
     marginRight: 4,
   },
@@ -438,45 +598,29 @@ const styles = StyleSheet.create({
     color: '#B3B3B3',
     fontSize: 14,
   },
+  moreButton: {
+    padding: 4,
+  },
   postText: {
     color: 'white',
     fontSize: 16,
     marginBottom: 12,
+    lineHeight: 22,
   },
   postActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
+    marginTop: 8,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 6,
   },
   actionText: {
-    color: '#B3B3B3',
     fontSize: 14,
     marginLeft: 4,
-  },
-  voteContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    minWidth: 100,
-  },
-  voteText: {
-    color: '#B3B3B3',
-    fontSize: 16,
-    fontWeight: '600',
-    marginHorizontal: 8,
-    minWidth: 30,
-    textAlign: 'center',
-  },
-  positiveVote: {
-    color: '#1DB954',
-  },
-  negativeVote: {
-    color: '#FF4444',
   },
   loadingContainer: {
     flex: 1,
@@ -500,12 +644,103 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 40,
   },
-  viewCommentsButton: {
-    marginTop: 8,
-    paddingVertical: 8,
+  floatingActionButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#1DB954',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  viewCommentsText: {
-    color: '#B3B3B3',
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#121212',
+    paddingTop: Platform.OS === 'ios' ? 50 : 30,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#282828',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalCloseText: {
+    color: 'white',
+    fontSize: 16,
+  },
+  postButton: {
+    backgroundColor: '#1DB954',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  postButtonDisabled: {
+    opacity: 0.5,
+  },
+  postButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  compositionArea: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  postInput: {
+    flex: 1,
+    color: 'white',
+    fontSize: 16,
+    padding: 12,
+  },
+  postingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  postingText: {
+    color: 'white',
+    fontSize: 16,
+    marginLeft: 8,
+  },
+  characterCountContainer: {
+    padding: 16,
+  },
+  characterCount: {
+    color: 'white',
     fontSize: 14,
+  },
+  characterCountWarning: {
+    color: '#FF4444',
+  },
+  characterCountLimit: {
+    color: '#1DB954',
+  },
+  voteContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    minWidth: 100,
+    gap: 4,
+  },
+  voteText: {
+    fontSize: 16,
+    fontWeight: '600',
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  positiveVote: {
+    color: '#1DB954',
+  },
+  negativeVote: {
+    color: '#FF4444',
   },
 }); 

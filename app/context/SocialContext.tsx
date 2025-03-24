@@ -1,175 +1,142 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Alert } from 'react-native';
+import { Post } from '@/app/services/types';
 import { 
-  Post, 
-  Comment, 
   getPosts, 
-  toggleLike, 
-  toggleRepost, 
-  addComment, 
   addPost, 
-  getComments,
-  toggleCommentLike, 
-  toggleCommentDislike, 
-  addCommentReply 
-} from '@/app/services/socialService';
+  togglePostLike, 
+  togglePostDislike, 
+  deletePost,
+  addComment
+} from '@/app/services/postService';
+import { 
+  getPostComments, 
+  getDirectComments, 
+  getPost 
+} from '@/app/services/commentService';
+import { getUserPosts } from '@/app/services/userService';
 
 interface SocialContextType {
-  // State
   posts: Post[];
-  isLoading: boolean;
-  
-  // Actions
   loadPosts: () => Promise<void>;
-  createPost: (content: string) => Promise<Post[]>;
-  likePost: (postId: string) => Promise<void>;
-  repostPost: (postId: string) => Promise<void>;
-  addPostComment: (postId: string, comment: string) => Promise<void>;
-  getPostComments: (postId: string) => Promise<Comment[]>;
-  likeComment: (postId: string, commentId: string) => Promise<void>;
-  dislikeComment: (postId: string, commentId: string) => Promise<void>;
-  replyToComment: (postId: string, commentId: string, content: string) => Promise<void>;
+  createPost: (content: string) => Promise<void>;
+  togglePostLike: (postId: string) => Promise<void>;
+  togglePostDislike: (postId: string) => Promise<void>;
+  getPostComments: (postId: string) => Promise<Post[]>;
+  getPost: (postId: string) => Promise<Post | null>;
+  deletePost: (postId: string) => Promise<void>;
+  isCurrentUserPost: (post: Post) => boolean;
+  addComment: (parentId: string, content: string) => Promise<void>;
 }
 
-const SocialContext = createContext<SocialContextType | null>(null);
+const SocialContext = createContext<SocialContextType | undefined>(undefined);
 
-export const SocialProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export function SocialProvider({ children }: { children: React.ReactNode }) {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const loadPosts = async () => {
+    try {
+      const fetchedPosts = await getPosts();
+      setPosts(fetchedPosts);
+    } catch (error) {
+      console.error('Error loading posts:', error);
+      Alert.alert('Error', 'Failed to load posts');
+    }
+  };
 
   useEffect(() => {
     loadPosts();
   }, []);
 
-  const loadPosts = async () => {
-    try {
-      setIsLoading(true);
-      const postsData = await getPosts();
-      setPosts(postsData);
-    } catch (error) {
-      console.error('Error loading posts:', error);
-      Alert.alert('Error', 'Failed to load posts. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const createPost = async (content: string) => {
-    if (!content.trim()) {
-      throw new Error('Post content cannot be empty');
-    }
-
     try {
-      const updatedPosts = await addPost(content);
-      setPosts(updatedPosts);
-      return updatedPosts;
+      await addPost(content);
+      await loadPosts();
     } catch (error) {
       console.error('Error creating post:', error);
-      Alert.alert('Error', 'Failed to create post. Please try again.');
-      throw error;
+      Alert.alert('Error', 'Failed to create post');
     }
   };
 
-  const likePost = async (postId: string) => {
+  const handleAddComment = async (parentId: string, content: string) => {
     try {
-      const updatedPosts = await toggleLike(postId);
-      setPosts(updatedPosts);
-    } catch (error) {
-      console.error('Error liking post:', error);
-      Alert.alert('Error', 'Failed to like post. Please try again.');
-      throw error;
-    }
-  };
-
-  const repostPost = async (postId: string) => {
-    try {
-      const updatedPosts = await toggleRepost(postId);
-      setPosts(updatedPosts);
-    } catch (error) {
-      console.error('Error reposting:', error);
-      Alert.alert('Error', 'Failed to dislike post. Please try again.');
-      throw error;
-    }
-  };
-
-  const addPostComment = async (postId: string, comment: string) => {
-    try {
-      const updatedPosts = await addComment(postId, comment);
-      setPosts(updatedPosts);
+      await addComment(parentId, content);
+      await loadPosts();
     } catch (error) {
       console.error('Error adding comment:', error);
-      Alert.alert('Error', 'Failed to add comment. Please try again.');
-      throw error;
+      Alert.alert('Error', 'Failed to add comment');
     }
   };
 
-  const getPostComments = async (postId: string) => {
+  const handleVote = async (postId: string, isUpvote: boolean) => {
     try {
-      return await getComments(postId);
+      if (isUpvote) {
+        await togglePostLike(postId);
+      } else {
+        await togglePostDislike(postId);
+      }
+      await loadPosts();
     } catch (error) {
-      console.error('Error fetching comments:', error);
-      Alert.alert('Error', 'Failed to load comments. Please try again.');
-      throw error;
+      console.error('Error voting:', error);
+      Alert.alert('Error', 'Failed to vote on post');
     }
   };
 
-  const likeComment = async (postId: string, commentId: string) => {
+  const handleDelete = async (postId: string) => {
     try {
-      const updatedPosts = await toggleCommentLike(postId, commentId);
-      setPosts(updatedPosts);
+      await deletePost(postId);
+      await loadPosts();
     } catch (error) {
-      console.error('Error liking comment:', error);
-      Alert.alert('Error', 'Failed to like comment. Please try again.');
-      throw error;
+      console.error('Error deleting post:', error);
+      Alert.alert('Error', 'Failed to delete post');
     }
   };
 
-  const dislikeComment = async (postId: string, commentId: string) => {
+  const getComments = async (postId: string): Promise<Post[]> => {
     try {
-      const updatedPosts = await toggleCommentDislike(postId, commentId);
-      setPosts(updatedPosts);
+      return await getPostComments(postId);
     } catch (error) {
-      console.error('Error disliking comment:', error);
-      Alert.alert('Error', 'Failed to dislike comment. Please try again.');
-      throw error;
+      console.error('Error getting comments:', error);
+      return [];
     }
   };
 
-  const replyToComment = async (postId: string, commentId: string, content: string) => {
+  const getSpecificPost = async (postId: string): Promise<Post | null> => {
     try {
-      const updatedPosts = await addCommentReply(postId, commentId, content);
-      setPosts(updatedPosts);
+      return await getPost(postId);
     } catch (error) {
-      console.error('Error adding reply:', error);
-      Alert.alert('Error', 'Failed to add reply. Please try again.');
-      throw error;
+      console.error('Error getting post:', error);
+      return null;
     }
+  };
+
+  const isCurrentUserPost = (post: Post): boolean => {
+    return post.handle === '@lebronfan';
   };
 
   return (
     <SocialContext.Provider
       value={{
         posts,
-        isLoading,
         loadPosts,
         createPost,
-        likePost,
-        repostPost,
-        addPostComment,
-        getPostComments,
-        likeComment,
-        dislikeComment,
-        replyToComment,
+        togglePostLike: (postId) => handleVote(postId, true),
+        togglePostDislike: (postId) => handleVote(postId, false),
+        getPostComments: getComments,
+        getPost: getSpecificPost,
+        deletePost: handleDelete,
+        isCurrentUserPost,
+        addComment: handleAddComment,
       }}
     >
       {children}
     </SocialContext.Provider>
   );
-};
+}
 
 export function useSocial() {
   const context = useContext(SocialContext);
-  if (!context) {
+  if (context === undefined) {
     throw new Error('useSocial must be used within a SocialProvider');
   }
   return context;

@@ -1,13 +1,14 @@
-import { StyleSheet, ScrollView, View, Text, Image, TouchableOpacity, Pressable, Alert, Linking } from 'react-native';
+import { StyleSheet, ScrollView, View, Text, Image, TouchableOpacity, Pressable, Alert, Linking, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useState, useEffect } from 'react';
-import { useAudio } from '../context/AudioContext';
+import { useMusic } from '../context/MusicContext';
 import { getLebronLastGame, getLebronSeasonStats } from '../services/nbaStats';
 import { getLebronNews, NewsItem } from '../services/newsService';
+import { useTheme } from '../context/ThemeContext';
 
 interface Song {
   id: number;
@@ -15,7 +16,6 @@ interface Song {
   artist: string;
   image: any;
   audio: any;
-  sound?: Audio.Sound;
 }
 
 interface GameStats {
@@ -36,94 +36,48 @@ interface SeasonStats {
   blocks: number;
 }
 
+const createSong = (id: number, title: string, artist: string, image: any, audio: any): Song => ({
+  id,
+  title,
+  artist,
+  image,
+  audio,
+});
+
 const topSongs: Song[] = [
-  { 
-    id: 1, 
-    title: 'Song 1', 
-    artist: 'Artist 1', 
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3')
-  },
-  { 
-    id: 2, 
-    title: 'Song 2', 
-    artist: 'Artist 2', 
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3')
-  },
-  { 
-    id: 3, 
-    title: 'Song 3', 
-    artist: 'Artist 3', 
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3')
-  },
-  { 
-    id: 4, 
-    title: 'Song 4', 
-    artist: 'Artist 4', 
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3')
-  },
+  createSong(1, 'Evil Bron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/EvilBron.mp3')),
+  createSong(2, 'Dear Lebron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/DearLebron.mp3')),
+  createSong(3, 'Man On The Lakers', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/ManOnTheLakers.mp3')),
+  createSong(4, 'Thinking Bout Lebron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/ThinkingBoutLebron.mp3')),
 ];
 
 const topArtists = [
-  { id: 1, name: 'Artist 1', image: require('@/assets/images/default_pfp.jpg') },
-  { id: 2, name: 'Artist 2', image: require('@/assets/images/default_pfp.jpg') },
-  { id: 3, name: 'Artist 3', image: require('@/assets/images/default_pfp.jpg') },
-  { id: 4, name: 'Artist 4', image: require('@/assets/images/default_pfp.jpg') },
-];
-
-const lebronNews: NewsItem[] = [
-  {
-    id: 1,
-    title: 'LeBron James reaches 40,000 career points milestone',
-    source: 'ESPN',
-    timestamp: '2h ago',
-  },
-  {
-    id: 2,
-    title: 'Lakers star LeBron James named Western Conference Player of the Week',
-    source: 'NBA.com',
-    timestamp: '1d ago',
-  },
-  {
-    id: 3,
-    title: 'LeBron James discusses his future with the Lakers',
-    source: 'The Athletic',
-    timestamp: '2d ago',
-  },
+  { id: 1, name: 'Bronify', image: require('@/assets/images/default_pfp.jpg') },
+  { id: 2, name: 'Bronify', image: require('@/assets/images/default_pfp.jpg') },
+  { id: 3, name: 'Bronify', image: require('@/assets/images/default_pfp.jpg') },
+  { id: 4, name: 'Bronify', image: require('@/assets/images/default_pfp.jpg') },
 ];
 
 const songs: Song[] = [
-  {
-    id: 1,
-    title: "First Song",
-    artist: "Artist 1",
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3'),
-  },
-  {
-    id: 2,
-    title: "Second Song",
-    artist: "Artist 2",
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3'),
-  },
-  {
-    id: 3,
-    title: "Third Song",
-    artist: "Artist 3",
-    image: require('@/assets/images/default_song.jpg'),
-    audio: require('@/assets/songs/first_song.mp3'),
-  },
+  createSong(1, 'Evil Bron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/EvilBron.mp3')),
+  createSong(2, 'Dear Lebron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/DearLebron.mp3')),
+  createSong(3, 'Man On The Lakers', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/ManOnTheLakers.mp3')),
+  createSong(4, 'Thinking Bout Lebron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/ThinkingBoutLebron.mp3')),
+  createSong(5, "That's Bron", 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/ThatsBron.mp3')),
+  createSong(6, 'I Kissed Lebron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/IKissedLebron.mp3')),
+  createSong(7, 'Not Throwing Away His Shot', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/NotThrowingAwayHisShot.mp3')),
+  createSong(8, 'They Got Luka Don', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/TheyGotLukaDon.mp3')),
+  createSong(9, 'Panic At Le Disco', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/PanicAtLeDisco.mp3')),
+  createSong(10, 'Lebron Lebron Lebron', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/LebronLebronLebron.mp3')),
+  createSong(11, 'Bron Mix', 'Bronify', require('@/assets/images/default_song.jpg'), require('@/assets/songs/BronMix.mp3')),
 ];
 
 export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const [currentlyPlaying, setCurrentlyPlaying] = useState<number | null>(null);
-  const [songs, setSongs] = useState<Song[]>(topSongs);
+  const { colors } = useTheme();
+  const { currentSong, isPlaying, playSong, togglePlayPause } = useMusic();
+  const [displayedSongs, setDisplayedSongs] = useState<Song[]>(topSongs); // Songs to display
   const [lastGameStats, setLastGameStats] = useState<GameStats | null>(null);
   const [seasonStats, setSeasonStats] = useState<SeasonStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -133,8 +87,6 @@ export default function HomeScreen() {
   const [newsError, setNewsError] = useState<string | null>(null);
 
   useEffect(() => {
-    setupAudio();
-    
     async function fetchStats() {
       try {
         setIsLoading(true);
@@ -169,78 +121,10 @@ export default function HomeScreen() {
 
     fetchStats();
     fetchNews();
-    
-    return () => {
-      cleanupAudio();
-    };
   }, []);
 
-  const setupAudio = async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch (error) {
-      console.error('Error setting up audio:', error);
-      Alert.alert('Error', 'Failed to set up audio playback');
-    }
-  };
-
-  const cleanupAudio = async () => {
-    try {
-      for (const song of songs) {
-        if (song.sound) {
-          await song.sound.unloadAsync();
-        }
-      }
-    } catch (error) {
-      console.error('Error cleaning up audio:', error);
-    }
-  };
-
-  const handleSongPress = async (song: Song) => {
-    try {
-      // If a song is currently playing, stop it
-      if (currentlyPlaying !== null && currentlyPlaying !== song.id) {
-        const currentSong = songs.find(s => s.id === currentlyPlaying);
-        if (currentSong?.sound) {
-          await currentSong.sound.stopAsync();
-        }
-      }
-
-      // If the song is already loaded, just play it
-      if (song.sound) {
-        const status = await song.sound.getStatusAsync();
-        if (status.isLoaded) {
-          await song.sound.playAsync();
-          setCurrentlyPlaying(song.id);
-          return;
-        }
-      }
-
-      // Load the new song without auto-playing
-      const { sound } = await Audio.Sound.createAsync(
-        song.audio,
-        { shouldPlay: false }
-      );
-
-      // Update the song in the state with the loaded sound
-      setSongs(prevSongs => 
-        prevSongs.map(s => 
-          s.id === song.id ? { ...s, sound } : s
-        )
-      );
-
-      // Now play the sound
-      await sound.playAsync();
-      setCurrentlyPlaying(song.id);
-    } catch (error) {
-      console.error('Error playing song:', error);
-      Alert.alert('Error', 'Failed to play the song. Please try again.');
-    }
+  const handleSongPress = (song: Song) => {
+    playSong(song);
   };
 
   const handleSongCardPress = (song: Song) => {
@@ -250,29 +134,11 @@ export default function HomeScreen() {
     });
   };
 
-  const handlePlayPause = async (song: Song) => {
-    try {
-      if (!song.sound) {
-        await handleSongPress(song);
-        return;
-      }
-
-      const status = await song.sound.getStatusAsync();
-      if (status.isLoaded) {
-        if (status.isPlaying) {
-          await song.sound.pauseAsync();
-          setCurrentlyPlaying(null);
-        } else {
-          await song.sound.playAsync();
-          setCurrentlyPlaying(song.id);
-        }
-      } else {
-        // If the sound is not loaded, try to load and play it
-        await handleSongPress(song);
-      }
-    } catch (error) {
-      console.error('Error toggling playback:', error);
-      Alert.alert('Error', 'Failed to control playback. Please try again.');
+  const handlePlayPause = (song: Song) => {
+    if (currentSong?.id === song.id) {
+      togglePlayPause();
+    } else {
+      playSong(song);
     }
   };
 
@@ -285,119 +151,121 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={styles.header}>
+        <Text style={[styles.greeting, { color: colors.text }]}>Hey, LeBron Fan!</Text>
+        <View style={styles.headerIcons}>
+          <TouchableOpacity style={styles.iconButton} onPress={() => router.push('/settings')}>
+            <Ionicons name="settings-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
       <ScrollView>
-        <View style={styles.header}>
-          <Text style={styles.greeting}>Good evening</Text>
-          <View style={styles.headerIcons}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="notifications-outline" size={24} color="white" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="time-outline" size={24} color="white" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="settings-outline" size={24} color="white" />
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Songs</Text>
+            <TouchableOpacity onPress={() => router.push('/search')}>
+              <Text style={[styles.viewAllButton, { color: colors.button }]}>View All</Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Top Songs</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {songs.map((song) => (
-              <Pressable
+            {topSongs.map((song) => (
+              <TouchableOpacity
                 key={song.id}
-                style={styles.songCard}
+                style={[styles.songCard, { backgroundColor: colors.card }]}
                 onPress={() => handleSongCardPress(song)}
               >
-                <View style={styles.songImageContainer}>
-                  <Image source={song.image} style={styles.songImage} />
-                </View>
-                <Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text>
-                <Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Top Artists</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {topArtists.map((artist) => (
-              <TouchableOpacity key={artist.id} style={styles.artistItem}>
-                <Image source={artist.image} style={styles.artistImage} />
-                <Text style={styles.artistName}>{artist.name}</Text>
+                <Image source={song.image} style={styles.songImage} />
+                <Text style={[styles.songTitle, { color: colors.text }]} numberOfLines={1}>{song.title}</Text>
+                <Text style={[styles.songArtist, { color: colors.neutral }]} numberOfLines={1}>{song.artist}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>LeBron James Stats</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Artists</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {topArtists.map((artist) => (
+              <View key={artist.id} style={[styles.artistItem, { backgroundColor: colors.card }]}>
+                <Image source={artist.image} style={styles.artistImage} />
+                <Text style={[styles.artistName, { color: colors.text }]}>{artist.name}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>LeBron Stats</Text>
+          </View>
           {isLoading ? (
             <View style={styles.loadingContainer}>
-              <Text style={styles.loadingText}>Loading stats...</Text>
+              <Text style={[styles.loadingText, { color: colors.neutral }]}>Loading stats...</Text>
             </View>
           ) : error ? (
             <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error}</Text>
+              <Text style={[styles.errorText, { color: colors.negative }]}>{error}</Text>
             </View>
           ) : (
             <View style={styles.statsContainer}>
               {lastGameStats && (
-                <View style={styles.statsCard}>
-                  <Text style={styles.statsTitle}>Last Game</Text>
-                  <Text style={styles.statsSubtitle}>{lastGameStats.opponent}</Text>
-                  <Text style={styles.statsSubtitle}>{lastGameStats.date}</Text>
+                <View style={[styles.statsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={[styles.statsTitle, { color: colors.text }]}>Last Game</Text>
+                  <Text style={[styles.statsSubtitle, { color: colors.neutral }]}>
+                    vs {lastGameStats.opponent} • {lastGameStats.date}
+                  </Text>
                   <View style={styles.statsGrid}>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{lastGameStats.points}</Text>
-                      <Text style={styles.statLabel}>PTS</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{lastGameStats.points}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>PTS</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{lastGameStats.rebounds}</Text>
-                      <Text style={styles.statLabel}>REB</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{lastGameStats.rebounds}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>REB</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{lastGameStats.assists}</Text>
-                      <Text style={styles.statLabel}>AST</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{lastGameStats.assists}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>AST</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{lastGameStats.steals}</Text>
-                      <Text style={styles.statLabel}>STL</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{lastGameStats.steals}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>STL</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{lastGameStats.blocks}</Text>
-                      <Text style={styles.statLabel}>BLK</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{lastGameStats.blocks}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>BLK</Text>
                     </View>
                   </View>
                 </View>
               )}
 
               {seasonStats && (
-                <View style={styles.statsCard}>
-                  <Text style={styles.statsTitle}>Season Average</Text>
+                <View style={[styles.statsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={[styles.statsTitle, { color: colors.text }]}>Season Average</Text>
                   <View style={styles.statsGrid}>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{seasonStats.points}</Text>
-                      <Text style={styles.statLabel}>PTS</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{seasonStats.points}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>PTS</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{seasonStats.rebounds}</Text>
-                      <Text style={styles.statLabel}>REB</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{seasonStats.rebounds}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>REB</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{seasonStats.assists}</Text>
-                      <Text style={styles.statLabel}>AST</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{seasonStats.assists}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>AST</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{seasonStats.steals}</Text>
-                      <Text style={styles.statLabel}>STL</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{seasonStats.steals}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>STL</Text>
                     </View>
                     <View style={styles.statItem}>
-                      <Text style={styles.statValue}>{seasonStats.blocks}</Text>
-                      <Text style={styles.statLabel}>BLK</Text>
+                      <Text style={[styles.statValue, { color: colors.text }]}>{seasonStats.blocks}</Text>
+                      <Text style={[styles.statLabel, { color: colors.neutral }]}>BLK</Text>
                     </View>
                   </View>
                 </View>
@@ -407,47 +275,49 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>LeBron News</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>LeBron News</Text>
+          </View>
           {isLoadingNews ? (
             <View style={styles.loadingContainer}>
-              <Text style={styles.loadingText}>Loading news...</Text>
+              <Text style={[styles.loadingText, { color: colors.neutral }]}>Loading news...</Text>
             </View>
           ) : newsError ? (
             <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{newsError}</Text>
+              <Text style={[styles.errorText, { color: colors.negative }]}>{newsError}</Text>
             </View>
           ) : news.length === 0 ? (
             <View style={styles.errorContainer}>
-              <Text style={styles.loadingText}>No news available</Text>
+              <Text style={[styles.loadingText, { color: colors.neutral }]}>No news available</Text>
             </View>
           ) : (
             news.map((newsItem) => (
               <TouchableOpacity 
                 key={newsItem.id} 
-                style={styles.newsItem}
+                style={[styles.newsItem, { backgroundColor: colors.card, borderColor: colors.border }]}
                 onPress={() => handleNewsPress(newsItem.url)}
               >
                 <View style={styles.newsContent}>
-                  <Text style={styles.newsTitle}>{newsItem.title}</Text>
+                  <Text style={[styles.newsTitle, { color: colors.text }]} numberOfLines={2}>{newsItem.title}</Text>
                   <View style={styles.newsFooter}>
-                    <Text style={styles.newsSource}>{newsItem.source}</Text>
-                    <Text style={styles.newsTimestamp}>{newsItem.timestamp}</Text>
+                    <Text style={[styles.newsSource, { color: colors.button }]}>{newsItem.source}</Text>
+                    <Text style={[styles.newsTimestamp, { color: colors.neutral }]}>{newsItem.timestamp}</Text>
                   </View>
                 </View>
-                <Ionicons name="chevron-forward" size={24} color="#B3B3B3" />
+                <Ionicons name="chevron-forward" size={24} color={colors.neutral} />
               </TouchableOpacity>
             ))
           )}
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    paddingTop: Platform.OS === 'ios' ? 60 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -459,7 +329,6 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: 'white',
   },
   headerIcons: {
     flexDirection: 'row',
@@ -472,48 +341,53 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 16,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   sectionTitle: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 16,
+  },
+  viewAllButton: {
+    fontSize: 16,
+    fontWeight: '500',
   },
   songCard: {
     marginRight: 16,
     width: 160,
-  },
-  songImageContainer: {
-    width: 160,
-    height: 160,
-    marginBottom: 8,
+    borderRadius: 8,
+    padding: 8,
   },
   songImage: {
-    width: 160,
-    height: 160,
+    width: 144,
+    height: 144,
     borderRadius: 8,
   },
   songTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
     marginBottom: 4,
+    marginTop: 6,
   },
   songArtist: {
     fontSize: 14,
-    color: '#B3B3B3',
   },
   artistItem: {
     marginRight: 16,
     alignItems: 'center',
+    padding: 8,
+    borderRadius: 8,
   },
   artistImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     marginBottom: 8,
   },
   artistName: {
-    color: 'white',
     fontSize: 14,
     textAlign: 'center',
   },
@@ -521,19 +395,17 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   statsCard: {
-    backgroundColor: '#282828',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
   },
   statsTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: 'white',
     marginBottom: 8,
   },
   statsSubtitle: {
     fontSize: 14,
-    color: '#B3B3B3',
     marginBottom: 12,
   },
   statsGrid: {
@@ -550,20 +422,18 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: 'white',
     marginBottom: 4,
   },
   statLabel: {
     fontSize: 12,
-    color: '#B3B3B3',
   },
   newsItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#282828',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
+    borderWidth: 1,
   },
   newsContent: {
     flex: 1,
@@ -571,7 +441,6 @@ const styles = StyleSheet.create({
   newsTitle: {
     fontSize: 16,
     fontWeight: '500',
-    color: 'white',
     marginBottom: 8,
   },
   newsFooter: {
@@ -581,18 +450,15 @@ const styles = StyleSheet.create({
   },
   newsSource: {
     fontSize: 14,
-    color: '#1DB954',
   },
   newsTimestamp: {
     fontSize: 14,
-    color: '#B3B3B3',
   },
   loadingContainer: {
     padding: 20,
     alignItems: 'center',
   },
   loadingText: {
-    color: '#B3B3B3',
     fontSize: 16,
   },
   errorContainer: {
@@ -600,7 +466,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: {
-    color: '#FF4444',
     fontSize: 16,
   },
 });
