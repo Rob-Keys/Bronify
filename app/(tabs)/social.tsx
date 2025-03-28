@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Post } from '@/app/services/types';
+import { Post, getRelativeTime } from '@/app/services/types';
 import { useSocial } from '@/app/context/SocialContext';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useTheme } from '@/app/context/ThemeContext';
+import { FontAwesome } from '@expo/vector-icons';
 
 // Define sort options
 type SortOption = 'recent' | 'liked';
@@ -27,6 +28,24 @@ export default function SocialScreen() {
     deletePost,
     isCurrentUserPost
   } = useSocial();
+  
+  // State to force refreshes for timestamp updates
+  const [refreshTimestamp, setRefreshTimestamp] = useState(0);
+
+  // Update timestamps when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      // This will force a re-render of all posts with fresh timestamps
+      setRefreshTimestamp(Date.now());
+      
+      // Optional: set up an interval to refresh timestamps every minute while screen is focused
+      const intervalId = setInterval(() => {
+        setRefreshTimestamp(Date.now());
+      }, 60000); // Update every minute
+      
+      return () => clearInterval(intervalId);
+    }, [])
+  );
   
   // Post modal state
   const [postModalVisible, setPostModalVisible] = useState(false);
@@ -203,6 +222,9 @@ export default function SocialScreen() {
   const renderPost = (post: Post) => {
     const totalRepliesCount = getTotalRepliesCount(post);
     
+    // Calculate fresh timestamp on every render
+    const relativeTime = getRelativeTime(post.createdAt);
+    
     return (
       <View 
         style={[
@@ -216,7 +238,7 @@ export default function SocialScreen() {
             <View style={styles.userInfo}>
               <Text style={[styles.username, { color: colors.text }]}>{post.username}</Text>
               <Text style={[styles.handle, { color: colors.neutral }]}>{post.handle}</Text>
-              <Text style={[styles.timestamp, { color: colors.neutral }]}>· {post.timestamp}</Text>
+              <Text style={[styles.timestamp, { color: colors.neutral }]}>· {relativeTime}</Text>
             </View>
           </View>
           
@@ -274,7 +296,7 @@ export default function SocialScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>The Finals</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>LeCommunity</Text>
         <TouchableOpacity style={styles.sortButton} onPress={handleToggleSortMenu}>
           <Ionicons name="filter" size={20} color={colors.text} />
           <Text style={[styles.sortButtonText, { color: colors.text }]}>
@@ -369,7 +391,7 @@ export default function SocialScreen() {
             </View>
           ) : (
             getSortedPosts().map(post => (
-              <React.Fragment key={post.id}>
+              <React.Fragment key={`${post.id}-${refreshTimestamp}`}>
                 {renderPost(post)}
               </React.Fragment>
             ))
@@ -557,20 +579,11 @@ const styles = StyleSheet.create({
     color: '#B3B3B3',
     fontSize: 16,
   },
-  post: {
+  postContainer: {
     flexDirection: 'row',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#282828',
-  },
-  postProfileImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  postContent: {
-    flex: 1,
   },
   postHeader: {
     flexDirection: 'row',
@@ -578,7 +591,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  userInfo: {
+  postUserInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     flexShrink: 1,
@@ -598,10 +611,8 @@ const styles = StyleSheet.create({
     color: '#B3B3B3',
     fontSize: 14,
   },
-  moreButton: {
-    padding: 4,
-  },
-  postText: {
+  postContent: {
+    flex: 1,
     color: 'white',
     fontSize: 16,
     marginBottom: 12,
@@ -724,23 +735,55 @@ const styles = StyleSheet.create({
   characterCountLimit: {
     color: '#1DB954',
   },
+  activeAction: {
+    backgroundColor: '#1DB95420',
+  },
+  activeActionText: {
+    color: '#1DB954',
+    fontWeight: '600',
+  },
+  commentsContainer: {
+    paddingLeft: 20,
+  },
+  post: {
+    flexDirection: 'row',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#282828',
+  },
+  postProfileImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  postContent: {
+    flex: 1,
+  },
+  postHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  userInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  postText: {
+    flex: 1,
+    color: 'white',
+    fontSize: 16,
+    marginBottom: 12,
+    lineHeight: 22,
+  },
   voteContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    minWidth: 100,
-    gap: 4,
   },
   voteText: {
-    fontSize: 16,
-    fontWeight: '600',
-    minWidth: 24,
-    textAlign: 'center',
-  },
-  positiveVote: {
-    color: '#1DB954',
-  },
-  negativeVote: {
-    color: '#FF4444',
+    fontSize: 14,
+    marginHorizontal: 4,
   },
 }); 

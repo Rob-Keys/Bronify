@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Post } from '@/app/services/types';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { Post, getRelativeTime } from '@/app/services/types';
 import { useSocial } from '@/app/context/SocialContext';
 import { useTheme } from '@/app/context/ThemeContext';
 
@@ -12,6 +12,24 @@ export default function PostScreen() {
   const params = useLocalSearchParams();
   const { postId } = params;
   const { colors } = useTheme();
+  
+  // State to force refreshes for timestamp updates
+  const [refreshTimestamp, setRefreshTimestamp] = useState(0);
+
+  // Update timestamps when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      // This will force a re-render with fresh timestamps
+      setRefreshTimestamp(Date.now());
+      
+      // Optional: set up an interval to refresh timestamps while screen is focused
+      const intervalId = setInterval(() => {
+        setRefreshTimestamp(Date.now());
+      }, 60000); // Update every minute
+      
+      return () => clearInterval(intervalId);
+    }, [])
+  );
   
   // Use the social context
   const { 
@@ -271,6 +289,9 @@ export default function PostScreen() {
   const renderPost = (post: Post, isReply = false) => {
     const nestedRepliesCount = countNestedReplies(post);
     
+    // Calculate fresh timestamp on every render
+    const relativeTime = getRelativeTime(post.createdAt);
+    
     return (
       <View style={[
         styles.postContainer,
@@ -284,7 +305,7 @@ export default function PostScreen() {
               <View style={styles.userInfo}>
                 <Text style={[styles.username, { color: colors.text }]}>{post.username}</Text>
                 <Text style={[styles.handle, { color: colors.neutral }]}>{post.handle}</Text>
-                <Text style={[styles.timestamp, { color: colors.neutral }]}>· {post.timestamp}</Text>
+                <Text style={[styles.timestamp, { color: colors.neutral }]}>· {relativeTime}</Text>
               </View>
               {isCurrentUserPost(post.handle) && !isReply && (
                 <TouchableOpacity 
@@ -393,7 +414,7 @@ export default function PostScreen() {
         
         {/* Replies list */}
         {replies.map(reply => (
-          <React.Fragment key={reply.id}>
+          <React.Fragment key={`${reply.id}-${refreshTimestamp}`}>
             {renderPost(reply, true)}
           </React.Fragment>
         ))}

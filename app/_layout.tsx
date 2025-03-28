@@ -71,6 +71,14 @@ function RootLayoutInner() {
                   }} 
                 />
                 <Stack.Screen 
+                  name="player" 
+                  options={{ 
+                    headerShown: false,
+                    presentation: 'modal',
+                    animation: 'slide_from_bottom'
+                  }} 
+                />
+                <Stack.Screen 
                   name="playlist" 
                   options={{ 
                     presentation: 'card',
@@ -104,6 +112,14 @@ function RootLayoutInner() {
                 />
                 <Stack.Screen 
                   name="theme-selector" 
+                  options={{ 
+                    presentation: 'card',
+                    animation: 'slide_from_right',
+                    headerShown: false
+                  }} 
+                />
+                <Stack.Screen 
+                  name="artist" 
                   options={{ 
                     presentation: 'card',
                     animation: 'slide_from_right',

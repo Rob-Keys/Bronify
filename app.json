@@ -54,7 +54,8 @@
         {
           "microphonePermission": "This app does not use the microphone."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

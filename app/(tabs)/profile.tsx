@@ -2,13 +2,14 @@ import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Image, Pressable,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColorScheme } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useState, useEffect } from 'react';
-import { Post } from '@/app/services/types';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useState, useEffect, useCallback } from 'react';
+import { Post, getRelativeTime } from '@/app/services/types';
 import { getPostComments } from '@/app/services/commentService';
 import { useSocial } from '@/app/context/SocialContext';
 import { useTheme } from '@/app/context/ThemeContext';
 import { useMusic } from '@/app/context/MusicContext';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface Song {
   id: number;
@@ -51,12 +52,31 @@ export default function ProfileScreen() {
     removeFromPlaylist,
     toggleLike,
     deletePlaylist,
-    updatePlaylistName
+    updatePlaylistName,
+    addToQueue
   } = useMusic();
   
   const [activeTab, setActiveTab] = useState('library');
   const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // State to force refreshes for timestamp updates
+  const [refreshTimestamp, setRefreshTimestamp] = useState(0);
+
+  // Update timestamps when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      // This will force a re-render of all posts with fresh timestamps
+      setRefreshTimestamp(Date.now());
+      
+      // Set up an interval to refresh timestamps every minute while screen is focused
+      const intervalId = setInterval(() => {
+        setRefreshTimestamp(Date.now());
+      }, 60000); // Update every minute
+      
+      return () => clearInterval(intervalId);
+    }, [])
+  );
 
   useEffect(() => {
     loadUserContent();
@@ -201,7 +221,7 @@ export default function ProfileScreen() {
   };
 
   const renderPost = (post: Post) => (
-    <View key={post.id} style={[styles.post, { borderBottomColor: colors.border }]}>
+    <View key={`${post.id}-${refreshTimestamp}`} style={[styles.post, { borderBottomColor: colors.border }]}>
       <Image 
         source={require('@/assets/images/default_pfp.jpg')} 
         style={styles.postProfileImage} 
@@ -210,7 +230,7 @@ export default function ProfileScreen() {
         <View style={styles.postHeader}>
           <Text style={[styles.username, { color: colors.text }]}>{post.username}</Text>
           <Text style={[styles.handle, { color: colors.neutral }]}>{post.handle}</Text>
-          <Text style={[styles.postTimestamp, { color: colors.neutral }]}>· {post.timestamp}</Text>
+          <Text style={[styles.postTimestamp, { color: colors.neutral }]}>· {getRelativeTime(post.createdAt)}</Text>
         </View>
         <Text style={[styles.postText, { color: colors.text }]}>{post.content}</Text>
         <View style={styles.postActions}>
@@ -260,7 +280,7 @@ export default function ProfileScreen() {
       
       <View style={styles.librarySection}>
         <Text style={[styles.subsectionTitle, { color: colors.text }]}>Playlists</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playlistsContainer}>
           {playlists.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Ionicons name="list" size={48} color={colors.neutral} />
@@ -273,14 +293,24 @@ export default function ProfileScreen() {
                   style={styles.playlistCard}
                   onPress={() => handlePlaylistPress(playlist.id)}
                 >
-                  <Image
-                    source={require('@/assets/images/default_playlist.png')}
-                    style={styles.playlistImage}
-                  />
-                  <Text style={[styles.playlistName, { color: colors.text }]}>{playlist.name}</Text>
-                  <Text style={[styles.playlistSongCount, { color: colors.neutral }]}>
-                    {playlist.songs.length} songs
-                  </Text>
+                  <View style={styles.playlistImageContainer}>
+                    <Image
+                      source={playlist.songs && playlist.songs.length > 0 ? 
+                        playlist.songs[0].image : 
+                        require('@/assets/images/default_playlist.png')}
+                      style={styles.playlistImage}
+                    />
+                    <LinearGradient
+                      colors={['rgba(0,0,0,0.1)', 'rgba(0,0,0,0.7)']}
+                      style={styles.playlistImageOverlay}
+                    />
+                  </View>
+                  <View style={styles.playlistInfo}>
+                    <Text style={[styles.playlistName, { color: colors.text }]} numberOfLines={1}>{playlist.name}</Text>
+                    <Text style={[styles.playlistSongCount, { color: colors.neutral }]}>
+                      {playlist.songs.length} songs
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               </View>
             ))
@@ -310,12 +340,23 @@ export default function ProfileScreen() {
                 <Text style={[styles.songTitle, { color: colors.text }]}>{song.title}</Text>
                 <Text style={[styles.songArtist, { color: colors.neutral }]}>{song.artist}</Text>
               </View>
-              <TouchableOpacity
-                style={styles.unlikeButton}
-                onPress={() => handleUnlikeSong(song)}
-              >
-                <Ionicons name="heart" size={24} color="#FF4B4B" />
-              </TouchableOpacity>
+              <View style={styles.songActions}>
+                <TouchableOpacity
+                  style={styles.songAction}
+                  onPress={() => {
+                    addToQueue(song);
+                    Alert.alert('Added to Queue', `${song.title} has been added to your queue.`);
+                  }}
+                >
+                  <Ionicons name="add-circle-outline" size={24} color={colors.neutral} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.songAction}
+                  onPress={() => handleUnlikeSong(song)}
+                >
+                  <Ionicons name="heart" size={24} color="#FF4B4B" />
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
           ))
         )}
@@ -357,7 +398,7 @@ export default function ProfileScreen() {
         ) : (
           userPosts.map(post => (
             <TouchableOpacity 
-              key={post.id} 
+              key={`${post.id}-${refreshTimestamp}`}
               onPress={() => router.push({
                 pathname: '/post',
                 params: { postId: post.id }
@@ -377,7 +418,7 @@ export default function ProfileScreen() {
         ) : (
           userComments.map(comment => (
             <TouchableOpacity 
-              key={comment.id}
+              key={`${comment.id}-${refreshTimestamp}`}
               onPress={() => router.push({
                 pathname: '/post',
                 params: { postId: comment.parentId }
@@ -392,7 +433,7 @@ export default function ProfileScreen() {
                   <View style={styles.postHeader}>
                     <Text style={[styles.username, { color: colors.text }]}>{comment.username}</Text>
                     <Text style={[styles.handle, { color: colors.neutral }]}>{comment.handle}</Text>
-                    <Text style={[styles.postTimestamp, { color: colors.neutral }]}>· {comment.timestamp}</Text>
+                    <Text style={[styles.postTimestamp, { color: colors.neutral }]}>· {getRelativeTime(comment.createdAt)}</Text>
                   </View>
                   <Text style={[styles.postText, { color: colors.text }]}>{comment.content}</Text>
                   <View style={styles.postActions}>
@@ -499,7 +540,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: Platform.OS === 'ios' ? 60 : 0,
+    paddingTop: Platform.OS === 'ios' ? 40 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -569,29 +610,58 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   playlistCardContainer: {
-    marginRight: 12,
+    marginRight: 16,
+    marginLeft: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   playlistCard: {
-    width: 140,
+    width: 160,
     backgroundColor: '#282828',
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  playlistImageContainer: {
+    position: 'relative',
+    width: '100%',
+    height: 160,
   },
   playlistImage: {
     width: '100%',
-    height: 100,
-    borderRadius: 8,
-    marginBottom: 6,
+    height: '100%',
+    borderTopLeftRadius: 10, 
+    borderTopRightRadius: 10,
+  },
+  playlistImageOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+  },
+  playlistInfo: {
+    padding: 12,
   },
   playlistName: {
     color: 'white',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 'bold',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   playlistSongCount: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#B3B3B3',
+  },
+  playlistsContainer: {
+    paddingLeft: 12,
+    paddingRight: 4,
+    paddingBottom: 8,
+    paddingTop: 8,
   },
   songItem: {
     flexDirection: 'row',
@@ -617,6 +687,14 @@ const styles = StyleSheet.create({
   songArtist: {
     color: '#B3B3B3',
     fontSize: 14,
+  },
+  songActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  songAction: {
+    padding: 8,
+    marginLeft: 4,
   },
   unlikeButton: {
     padding: 8,

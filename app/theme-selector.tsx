@@ -8,55 +8,116 @@ import Colors, { ThemeType } from '@/constants/Colors';
 type ThemePreviewProps = {
   name: string;
   id: string;
-  accentColor: string;
-  backgroundColor: string;
-  textColor: string;
+  themeColors: Record<string, string>;
   isActive: boolean;
   onSelect: () => void;
 };
 
-const ThemePreview = ({ name, id, accentColor, backgroundColor, textColor, isActive, onSelect }: ThemePreviewProps) => {
+const ThemePreview = ({ name, id, themeColors, isActive, onSelect }: ThemePreviewProps) => {
   // Separate styles for ThemePreview component
   const previewStyles = StyleSheet.create({
     themeOption: {
+      flexDirection: 'column',
+      padding: 16,
+      borderRadius: 12,
+      marginBottom: 16,
+      borderWidth: 3,
+      backgroundColor: themeColors.card,
+      borderColor: isActive ? themeColors.tint : 'transparent',
+      elevation: 4,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+    },
+    themeHeader: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: 16,
-      borderRadius: 8,
-      marginBottom: 12,
-      borderWidth: 2,
-    },
-    themeContent: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    themeColor: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      marginRight: 12,
+      marginBottom: 16,
     },
     themeName: {
-      fontSize: 18,
-      fontWeight: '500',
+      fontSize: 20,
+      fontWeight: '600',
+      color: themeColors.text,
     },
+    colorsContainer: {
+      marginTop: 8,
+    },
+    colorRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    colorBlock: {
+      height: 28,
+      borderRadius: 4,
+      marginRight: 10,
+    },
+    colorLabel: {
+      fontSize: 14,
+      color: themeColors.text,
+      opacity: 0.8,
+    },
+    selectedIndicator: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: themeColors.border,
+      paddingTop: 8,
+    },
+    selectedText: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: themeColors.tint,
+      marginLeft: 8,
+    }
   });
+
+  // Define which colors to show with their labels and relative sizes
+  const colorBlocks = [
+    { color: themeColors.background, width: 100, label: 'Background' },
+    { color: themeColors.tint, width: 100, label: 'Primary/Accent' },
+    { color: themeColors.text, width: 100, label: 'Text' },
+    { color: themeColors.card, width: 80, label: 'Card/Surface' },
+    { color: themeColors.positive, width: 60, label: 'Positive' },
+    { color: themeColors.negative, width: 60, label: 'Negative' },
+    { color: themeColors.border, width: 60, label: 'Border' },
+  ];
 
   return (
     <TouchableOpacity
-      style={[
-        previewStyles.themeOption,
-        { backgroundColor: backgroundColor, borderColor: isActive ? accentColor : backgroundColor }
-      ]}
+      style={previewStyles.themeOption}
       onPress={onSelect}
+      activeOpacity={0.7}
     >
-      <View style={previewStyles.themeContent}>
-        <View style={[previewStyles.themeColor, { backgroundColor: accentColor }]} />
-        <Text style={[previewStyles.themeName, { color: textColor }]}>{name}</Text>
+      <View style={previewStyles.themeHeader}>
+        <Text style={previewStyles.themeName}>{name}</Text>
       </View>
+      
+      <View style={previewStyles.colorsContainer}>
+        {colorBlocks.map((block, index) => (
+          <View key={index} style={previewStyles.colorRow}>
+            <View 
+              style={[
+                previewStyles.colorBlock, 
+                { 
+                  backgroundColor: block.color,
+                  width: block.width,
+                }
+              ]} 
+            />
+            <Text style={previewStyles.colorLabel}>{block.label}</Text>
+          </View>
+        ))}
+      </View>
+
       {isActive && (
-        <Ionicons name="checkmark-circle" size={24} color={accentColor} />
+        <View style={previewStyles.selectedIndicator}>
+          <Ionicons name="checkmark-circle" size={18} color={themeColors.tint} />
+          <Text style={previewStyles.selectedText}>Currently Selected</Text>
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -127,9 +188,7 @@ export default function ThemeSelectorScreen() {
                 key={item.id}
                 id={item.id}
                 name={item.name}
-                accentColor={themeColors.tint}
-                backgroundColor={themeColors.card}
-                textColor={themeColors.text}
+                themeColors={themeColors}
                 isActive={theme === item.id}
                 onSelect={() => setTheme(item.id as ThemeType)}
               />

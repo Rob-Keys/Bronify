@@ -35,19 +35,18 @@ export const getPosts = async (): Promise<Post[]> => {
 };
 
 // Add a new post
-export const addPost = async (content: string): Promise<Post[]> => {
+export const addPost = async (content: string): Promise<Post> => {
   try {
     const posts = await getPosts();
-    const now = Date.now();
     
+    // Create new post
     const newPost: Post = {
-      id: now.toString(),
-      username: 'LeBron Fan',
-      handle: '@lebronfan',
-      profileImage: 'default_pfp',
+      id: Date.now().toString(),
       content,
-      timestamp: getRelativeTime(now),
-      createdAt: now,
+      username: 'Bronify User',
+      handle: 'user',
+      profileImage: 'default_pfp',
+      createdAt: Date.now(), // Only set createdAt timestamp
       likes: 0,
       dislikes: 0,
       comments: 0,
@@ -55,12 +54,16 @@ export const addPost = async (content: string): Promise<Post[]> => {
       isLiked: false,
       isDisliked: false,
       isComment: false,
-      parentId: null
+      parentId: null,
     };
     
+    // Add to posts array
     const updatedPosts = [newPost, ...posts];
+    
+    // Save to AsyncStorage
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedPosts));
-    return updatedPosts;
+    
+    return newPost;
   } catch (error) {
     console.error('Error adding post:', error);
     throw error;
@@ -257,17 +260,15 @@ export const deletePost = async (postId: string): Promise<Post[]> => {
 export const addComment = async (parentId: string, content: string): Promise<Post[]> => {
   try {
     const posts = await getPosts();
-    const now = Date.now();
     
     // Create the new comment
     const newComment: Post = {
-      id: now.toString(),
+      id: Date.now().toString(),
       username: 'LeBron Fan',
       handle: '@lebronfan',
       profileImage: 'default_pfp',
       content,
-      timestamp: getRelativeTime(now),
-      createdAt: now,
+      createdAt: Date.now(), // Only set createdAt timestamp
       likes: 0,
       dislikes: 0,
       comments: 0,

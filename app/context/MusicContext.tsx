@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
+import { AVPlaybackStatus } from 'expo-av/build/AV';
 import { AppState, AppStateStatus } from 'react-native';
 import { Alert } from 'react-native';
+import { fetchSongs, updateSongPlayCount, getSongById } from '../services/databaseService';
 
 // Define constants for the Audio module that might not be available in this version
 const INTERRUPTION_MODE_IOS_DO_NOT_MIX = 1;
@@ -11,16 +13,17 @@ const INTERRUPTION_MODE_ANDROID_DO_NOT_MIX = 1;
 // Audio quality constants
 const AUDIO_QUALITY_HIGH = 16000 * 48; // High quality bitrate
 
+// Threshold in seconds for counting a song play
+const PLAY_COUNT_THRESHOLD = 30;
+
 interface Song {
   id: number;
   title: string;
   artist: string;
-  image: any;
-  audio: any;
-  isLiked?: boolean;
-  progress?: number;
-  isPlaying?: boolean;
-  duration?: number;
+  plays: number;
+  song_url: string;
+  art_url: string;
+  artist_socials: Record<string, string>;
 }
 
 interface Playlist {
@@ -35,6 +38,8 @@ interface SongState {
   isPlaying: boolean;
   progress: number;
   duration: number;
+  lastUpdateTime: number;
+  isSeeking: boolean;
 }
 
 interface MusicContextType {
@@ -62,10 +67,31 @@ interface MusicContextType {
   getSongWithState: (song: Song) => Song;
   getSavedProgress: (songId: number) => Promise<number>;
   saveSongProgress: (songId: number, position: number) => Promise<void>;
-  seekTo: (position: number) => Promise<void>;
+  seekTo: (position: number) => Promise<boolean>;
+  skipToNext: () => Promise<boolean>;
+  skipToPrevious: () => Promise<boolean>;
+  addMultipleToQueue: (songs: Song[]) => void;
+  clearQueue: () => void;
+  reorderQueue: (fromIndex: number, toIndex: number) => void;
+  isAutoPlayEnabled: boolean;
+  toggleAutoPlay: () => void;
+  getNextQueueSong: () => Song | null;
+  lastKnownProgress: number;
+  topArtists: Array<{
+    id: number;
+    name: string;
+    image: any;
+    bio?: string;
+    socialLinks?: {
+      instagram?: string;
+      twitter?: string;
+      tiktok?: string;
+      website?: string;
+    };
+  }>;
 }
 
-export const MusicContext = createContext<MusicContextType | undefined>(undefined);
+const MusicContext = createContext<MusicContextType | undefined>(undefined);
 
 // Singleton to manage song instances
 class SongManager {
@@ -114,7 +140,7 @@ interface SongProgress {
   timestamp: number;
 }
 
-export function MusicProvider({ children }: { children: React.ReactNode }) {
+export const MusicProvider = ({ children }: { children: React.ReactNode }) => {
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([
     { id: 1, name: 'Favorites', songs: [] },
@@ -122,16 +148,75 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     { id: 3, name: 'Chill Vibes', songs: [] },
   ]);
   const [queue, setQueue] = useState<Song[]>([]);
+  const [previousSongs, setPreviousSongs] = useState<Song[]>([]);
   const [currentSongState, setCurrentSongState] = useState<SongState | null>(null);
   const [soundObjects, setSoundObjects] = useState<{ [key: number]: Audio.Sound }>({});
   const [currentPlaylistId, setCurrentPlaylistId] = useState<number | null>(null);
   const [playlistOrder, setPlaylistOrder] = useState<number[]>([]);
   const songManager = SongManager.getInstance();
+  const [isAutoPlayEnabled, setIsAutoPlayEnabled] = useState<boolean>(true);
+  const [preloadedSongs, setPreloadedSongs] = useState<{ [key: number]: Audio.Sound }>({});
+  const [lastKnownProgress, setLastKnownProgress] = useState<number>(0);
+  const progressUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+  const lastProgressUpdate = useRef<number>(0);
+  const isSeekingRef = useRef<boolean>(false);
+  const progressUpdateRate = 250; // Update every 250ms for smooth UI
+  const [allSongs, setAllSongs] = useState<Song[]>([]);
+
+  // Add topArtists state
+  const [topArtists] = useState([
+    { 
+      id: 1, 
+      name: 'Bron Jamz', 
+      image: require('@/assets/images/default_pfp.jpg'),
+      bio: 'Creating LeBron-inspired jams since 2019. The original LeBron tribute artist.',
+      socialLinks: {
+        instagram: 'https://www.instagram.com',
+        twitter: 'https://www.twitter.com',
+        tiktok: 'https://www.tiktok.com',
+        website: 'https://www.bronjamz.com'
+      }
+    },
+    { 
+      id: 2, 
+      name: 'King James Band', 
+      image: require('@/assets/images/default_pfp.jpg'),
+      bio: 'A collective of musicians dedicated to celebrating LeBron through music.',
+      socialLinks: {
+        instagram: 'https://www.instagram.com',
+        twitter: 'https://www.twitter.com',
+        tiktok: 'https://www.tiktok.com',
+        website: 'https://www.kingjamesband.com'
+      }
+    },
+    { 
+      id: 3, 
+      name: 'LA Brontourage', 
+      image: require('@/assets/images/default_pfp.jpg'),
+      bio: 'West coast beats celebrating the King\'s LA era. Lakers-inspired melodies.',
+      socialLinks: {
+        instagram: 'https://www.instagram.com',
+        twitter: 'https://www.twitter.com',
+        tiktok: 'https://www.tiktok.com',
+        website: 'https://www.labrontourage.com'
+      }
+    },
+    { 
+      id: 4, 
+      name: 'Bronify', 
+      image: require('@/assets/images/default_pfp.jpg'),
+      bio: 'The #1 LeBron James tribute artist. Creating songs about the King since 2021.',
+      socialLinks: {
+        instagram: 'https://www.instagram.com',
+        twitter: 'https://www.twitter.com',
+        tiktok: 'https://www.tiktok.com',
+        website: 'https://www.bronify.com'
+      }
+    },
+  ]);
 
   // Add reference to track app state changes
   const appState = useRef(AppState.currentState);
-  // Add progress save interval
-  const progressSaveInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Add a loading state to prevent multiple playback attempts
   const [isLoadingAudio, setIsLoadingAudio] = useState<boolean>(false);
@@ -143,6 +228,64 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   // Add a ref to track if this is the very first song played
   const isFirstSongAfterReload = useRef<boolean>(true);
   const progressUpdateTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Add ref to track if the current song's play count has been incremented
+  const playCountIncremented = useRef<boolean>(false);
+  // Track when playback started to determine if the 30 second threshold is met
+  const playbackStartTime = useRef<number>(0);
+
+  // Progress tracking interval
+  const [globalInterval, setGlobalInterval] = useState<NodeJS.Timeout | null>(null);
+  const lastTimeRef = useRef<number>(Date.now());
+
+  // Main function to update progress - called by interval
+  const updateGlobalProgress = useCallback(() => {
+    if (currentSongState && currentSongState.isPlaying && !currentSongState.isSeeking) {
+      const now = Date.now();
+      lastTimeRef.current = now;
+      
+      // Update the progress immediately with simple increment
+      setCurrentSongState(prev => {
+        if (!prev) return prev;
+        
+        // Add exactly 100ms of progress (our interval time)
+        const newProgress = Math.min(prev.progress + 0.1, prev.duration); 
+        
+        return {
+          ...prev, // Keep all existing properties
+          progress: newProgress,
+          lastUpdateTime: now
+        };
+      });
+    }
+  }, [currentSongState]);
+
+  // Setup and teardown for global progress tracking
+  useEffect(() => {
+    // Start tracking progress when a song is playing
+    if (currentSongState && currentSongState.isPlaying && !globalInterval) {
+      console.log('Starting global progress tracking');
+      lastTimeRef.current = Date.now();
+      
+      const interval = setInterval(() => {
+        updateGlobalProgress();
+      }, 100); // Update every 100ms for smooth motion
+      
+      setGlobalInterval(interval);
+    } 
+    // Stop tracking when no song is playing
+    else if ((!currentSongState || !currentSongState.isPlaying) && globalInterval) {
+      console.log('Stopping global progress tracking');
+      clearInterval(globalInterval);
+      setGlobalInterval(null);
+    }
+
+    return () => {
+      if (globalInterval) {
+        clearInterval(globalInterval);
+      }
+    };
+  }, [currentSongState?.isPlaying, globalInterval, updateGlobalProgress]);
 
   // Initialize Audio module on mount with optimized settings
   useEffect(() => {
@@ -236,8 +379,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   
   // Helper function to preload a specific song (safer approach)
   const preloadSong = async (song: Song) => {
-    if (!song || !song.audio) {
-      console.log('Cannot preload song with missing audio source');
+    if (!song || !song.song_url) {
+      console.log('Cannot preload song with missing song_url');
       return;
     }
     
@@ -277,7 +420,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         // Create a new sound object with optimized settings
         const { sound } = await Promise.race([
           Audio.Sound.createAsync(
-            song.audio,
+            { uri: song.song_url },
             { 
               shouldPlay: false,
               progressUpdateIntervalMillis: 100,
@@ -367,14 +510,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   // Set up interval to periodically save progress for currently playing song
   useEffect(() => {
     // Clear any existing interval
-    if (progressSaveInterval.current) {
-      clearInterval(progressSaveInterval.current);
-      progressSaveInterval.current = null;
+    if (progressUpdateInterval.current) {
+      clearInterval(progressUpdateInterval.current);
+      progressUpdateInterval.current = null;
     }
     
     // Only set up interval if there's a song playing
     if (currentSongState?.isPlaying) {
-      progressSaveInterval.current = setInterval(() => {
+      progressUpdateInterval.current = setInterval(() => {
         saveSongProgress(
           currentSongState.song.id,
           currentSongState.progress
@@ -383,8 +526,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
     
     return () => {
-      if (progressSaveInterval.current) {
-        clearInterval(progressSaveInterval.current);
+      if (progressUpdateInterval.current) {
+        clearInterval(progressUpdateInterval.current);
       }
     };
   }, [currentSongState?.isPlaying, currentSongState?.song.id]);
@@ -477,10 +620,14 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const addToQueue = (song: Song) => {
     setQueue(prev => {
-      if (!prev.some(s => s.id === song.id)) {
-        return [...prev, song];
+      // Don't add if already in queue
+      if (prev.some(s => s.id === song.id)) {
+        return prev;
       }
-      return prev;
+      
+      // If queue was empty and a song is currently playing, 
+      // start playing from queue when current song finishes
+      return [...prev, song];
     });
   };
 
@@ -567,179 +714,55 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const onPlaybackStatusUpdate = (status: any) => {
+  // Centralized progress update function
+  const updateProgress = useCallback((newProgress: number, newDuration?: number) => {
+    if (!currentSongState) return;
+
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastProgressUpdate.current;
+    
+    // Only update if enough time has passed or if duration changed
+    if (timeSinceLastUpdate >= progressUpdateRate || newDuration !== undefined) {
+      setCurrentSongState(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          progress: newProgress,
+          duration: newDuration !== undefined ? newDuration : prev.duration,
+          lastUpdateTime: now
+        };
+      });
+      lastProgressUpdate.current = now;
+    }
+  }, [currentSongState]);
+
+  // Handle playback status updates
+  const onPlaybackStatusUpdate = async (status: any) => {
     if (!status.isLoaded) {
-      // If the sound is not loaded, don't update anything
+      if (status.error) {
+        console.error(`Encountered a playback error: ${status.error}`);
+      }
       return;
     }
-    
-    // Convert status to proper type for better handling
-    const audioStatus = status as {
-      isLoaded: true;
-      positionMillis: number;
-      durationMillis?: number;
-      isPlaying: boolean;
-      didJustFinish?: boolean;
-      isBuffering?: boolean;
-      rate?: number;
-      volume?: number;
-    };
-    
-    // Track buffering state
-    if (audioStatus.isBuffering !== undefined && currentSongState) {
-      setIsBuffering(audioStatus.isBuffering);
-      
-      // If it's buffering too long, try to recover playback
-      if (audioStatus.isBuffering) {
-        // Set a timeout to check if still buffering after 3 seconds
-        setTimeout(() => {
-          if (isBuffering && currentSongState?.sound) {
-            // Try to pause and resume to fix buffering issues
-            currentSongState.sound.playFromPositionAsync(audioStatus.positionMillis)
-              .catch(err => console.error('Error recovering from buffer stall:', err));
-          }
-        }, 3000);
-      }
-    }
-    
-    // Handle song finishing
-    if (audioStatus.didJustFinish) {
+
+    // Only handle significant events
+    if (status.didJustFinish) {
+      // Handle song completion
       console.log('Song finished playing');
-      
-      if (currentSongState) {
-        // Clear saved progress since song finished
-        try {
-          AsyncStorage.removeItem(`songProgress_${currentSongState.song.id}`);
-        } catch (error) {
-          console.error('Error removing finished song progress:', error);
-        }
-        
-        setCurrentSongState(prev => prev ? {
-          ...prev,
-          isPlaying: false,
-          progress: 0
-        } : null);
-      }
+      await saveSongProgress(currentSongState!.song.id, 0);
+      await playNextSong();
       return;
     }
-    
-    // Only update if we have a current song playing
-    if (currentSongState) {
-      const newProgress = audioStatus.positionMillis / 1000;
       
-      // Ensure we always get the duration if available
-      let newDuration = currentSongState.duration;
-      if (audioStatus.durationMillis && audioStatus.durationMillis > 0) {
-        newDuration = audioStatus.durationMillis / 1000;
-      }
-      
-      // Always update playback progress to ensure the progress bar moves
-      // We'll only limit updates if position hasn't changed at all to prevent excessive rendering
-      const hasProgressChanged = Math.abs(newProgress - currentSongState.progress) > 0.01;
-      const hasDurationChanged = newDuration > 0 && Math.abs(newDuration - currentSongState.duration) > 0.1;
-      const hasPlayStateChanged = audioStatus.isPlaying !== currentSongState.isPlaying;
-      
-      // Always update if we have a valid duration but the current duration is 0
-      const shouldUpdateDuration = newDuration > 0 && currentSongState.duration === 0;
-      
-      // Create a fixed interval for progress updates to ensure smooth progression
-      // Update every ~250ms during playback for optimal UI experience
-      const shouldUpdateForInterval = audioStatus.isPlaying && (Math.floor(newProgress * 4) > Math.floor(currentSongState.progress * 4));
-      
-      // Update state if any relevant changes or we've hit our update interval
-      if (hasProgressChanged || hasDurationChanged || hasPlayStateChanged || shouldUpdateDuration || shouldUpdateForInterval) {
-        // Only log significant updates to avoid console spam
-        if (hasDurationChanged || hasPlayStateChanged || shouldUpdateDuration || 
-            Math.abs(newProgress - currentSongState.progress) > 1) {
-          console.log(`Updating song state - progress: ${newProgress.toFixed(2)}s, duration: ${newDuration.toFixed(2)}s`);
-        }
-        
-        setCurrentSongState(prev => {
-          if (!prev) return null;
-          
-          return {
-            ...prev,
-            isPlaying: audioStatus.isPlaying,
-            progress: newProgress,
-            duration: newDuration
-          };
-        });
-      }
-    }
-  };
-
-  const getOrCreateSound = async (song: Song): Promise<Audio.Sound> => {
-    try {
-      // If we have a sound object for this song, check if it's loaded properly
-      if (soundObjects[song.id]) {
-        try {
-          const status = await soundObjects[song.id].getStatusAsync();
-          if (status.isLoaded) {
-            // Sound is already loaded properly, return it
-            return soundObjects[song.id];
-          }
-          
-          // If it's not loaded correctly, unload it and recreate
-          await soundObjects[song.id].unloadAsync();
-        } catch (error) {
-          console.error('Error checking sound status:', error);
-          // Will fall through to recreate the sound
-        }
-      }
-
-      // Create an AbortController with a timeout to prevent hanging
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        console.log('Sound creation timeout reached (10s), aborting');
-        controller.abort();
-      }, 10000); // 10 second timeout
-      
-      try {
-        // Create a new sound object with improved settings
-        const { sound } = await Promise.race([
-          Audio.Sound.createAsync(
-            song.audio,
-            { 
-              shouldPlay: false,
-              progressUpdateIntervalMillis: 100, // More frequent updates for smoother UI
-              // Higher quality playback settings
-              androidImplementation: 'MediaPlayer',
-              volume: 1.0,
-              rate: 1.0,
-              // Set initial buffering settings
-            },
-            onPlaybackStatusUpdate
-          ),
-          new Promise<never>((_, reject) => {
-            // Listen for abort signal
-            controller.signal.addEventListener('abort', () => {
-              reject(new Error('Sound creation timed out after 10 seconds'));
-            });
-          })
-        ]);
-        
-        // Clear the timeout since sound creation succeeded
-        clearTimeout(timeoutId);
-
-        // Store the sound object
-        setSoundObjects(prev => ({
-          ...prev,
-          [song.id]: sound
-        }));
-
-        return sound;
-      } catch (createError) {
-        // Clear the timeout to prevent memory leaks
-        clearTimeout(timeoutId);
-        
-        if (createError instanceof Error && createError.message.includes('timed out')) {
-          console.log(`Sound creation timed out for song: ${song.title}`);
-        }
-        throw createError; // Re-throw to let the caller handle it
-      }
-    } catch (error) {
-      console.error('Error creating sound object:', error);
-      throw error;
+    // Handle play state changes
+    if (status.isPlaying !== currentSongState?.isPlaying) {
+      setCurrentSongState(prevState => {
+        if (!prevState) return prevState;
+        return {
+          ...prevState,
+          isPlaying: status.isPlaying,
+        };
+      });
     }
   };
 
@@ -750,8 +773,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       // Set loading state to prevent new plays during cleanup
       setIsLoadingAudio(true);
       
-      // Create an array to hold all stop/unload promises
-      const stopPromises = [];
+      // Create an array to hold all the promises
+      const stopPromises: Promise<any>[] = [];
       
       // Stop and unload current song first if it exists
       if (currentSongState?.sound) {
@@ -760,54 +783,82 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
           stopPromises.push(
             currentSongState.sound.stopAsync()
               .then(() => currentSongState.sound.unloadAsync())
-              .catch(err => console.error('Error stopping current song:', err))
+              .catch(err => {
+                console.log('Non-critical error stopping current song:', err);
+                // Proceed without throwing - we don't want to break the cleanup process
+                return Promise.resolve();
+              })
           );
         } catch (error) {
-          console.error('Error stopping current song:', error);
+          console.log('Non-critical error accessing current song:', error);
+          // Just log and continue, don't let this stop the cleanup process
         }
       }
       
       // Stop and unload all other sound objects
       for (const id in soundObjects) {
+        if (!soundObjects[id]) {
+          console.log(`Sound object ${id} is null, skipping cleanup`);
+          continue;
+        }
+        
         if (currentSongState?.song.id !== Number(id)) {
           try {
             console.log(`Stopping sound object ${id}`);
             stopPromises.push(
               soundObjects[id].stopAsync()
                 .then(() => soundObjects[id].unloadAsync())
-                .catch(err => console.error(`Error stopping sound ${id}:`, err))
+                .catch(err => {
+                  console.log(`Non-critical error stopping sound ${id}:`, err);
+                  // Proceed without throwing - we don't want to break the cleanup process
+                  return Promise.resolve();
+                })
             );
           } catch (error) {
-            console.error(`Error stopping sound ${id}:`, error);
+            console.log(`Non-critical error accessing sound ${id}:`, error);
+            // Just log and continue, don't let this stop the cleanup process
           }
         }
       }
       
+      // Also clean up any preloaded sounds
+      Object.entries(preloadedSongs).forEach(([id, sound]) => {
+        try {
+          console.log(`Stopping preloaded sound ${id}`);
+          stopPromises.push(
+            sound.unloadAsync()
+              .catch(err => {
+                console.log(`Non-critical error unloading preloaded sound ${id}:`, err);
+                return Promise.resolve();
+              })
+          );
+        } catch (error) {
+          console.log(`Non-critical error accessing preloaded sound ${id}:`, error);
+        }
+      });
+      
       // Wait for all stop/unload operations to complete
       await Promise.all(stopPromises);
       
-      // Reset the state after ensuring all sounds are stopped
+      console.log('All sounds stopped and unloaded');
+      
+      // Clear sound objects and current song
       setCurrentSongState(null);
       setSoundObjects({});
+      setPreloadedSongs({});
       
       // Final cleanup: ensure the Audio module is reset
-      try {
-        // Only try to reset Audio if needed (disabled)
-        const audioStatus = await Audio.getPermissionsAsync();
-        if (!audioStatus.granted) {
-          await Audio.setIsEnabledAsync(false);
-          await new Promise(resolve => setTimeout(resolve, 100));
-          await Audio.setIsEnabledAsync(true);
-        }
-      } catch (resetError) {
-        console.error('Error resetting Audio module:', resetError);
-      }
-      
-      console.log('All sounds stopped and audio reset');
+      Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        interruptionModeIOS: INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+        interruptionModeAndroid: INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+        shouldDuckAndroid: true,
+      }).catch(err => {
+        console.log('Non-critical error resetting audio mode:', err);
+      });
     } catch (error) {
-      console.error('Error in stopAllSounds:', error);
-    } finally {
-      setIsLoadingAudio(false);
+      console.error('Error stopping sounds:', error);
     }
   };
 
@@ -886,8 +937,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         
         // Only update if we have a new duration
         if (currentSongState.duration === 0 || Math.abs(updatedDuration - currentSongState.duration) > 0.5) {
-          console.log(`Explicitly updating duration to: ${updatedDuration.toFixed(2)}s`);
-          
           setCurrentSongState(prev => {
             if (!prev) return null;
             return {
@@ -904,41 +953,225 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const playSong = async (song: Song) => {
+  // Function to preload the next song in queue
+  const preloadNextSong = async () => {
     try {
-      // Prevent multiple simultaneous calls
-      if (isLoadingAudio) {
-        console.log('Already loading audio, ignoring request');
+      // Only preload if we have songs in the queue
+      if (queue.length === 0) {
+        return;
+      }
+
+      const nextSong = queue[0];
+      
+      // Skip if we've already preloaded this song or if it's already loaded as the current song
+      if (preloadedSongs[nextSong.id] || (currentSongState?.song.id === nextSong.id)) {
         return;
       }
       
-      console.log('Attempting to play song:', song.title);
+      console.log(`Preloading next song: ${nextSong.title}`);
+      
+      // Create a new sound object with minimal settings for preloading
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: nextSong.song_url },
+        { shouldPlay: false, volume: 0 },
+        null // No need for status updates on preloaded song
+      );
+      
+      // Store the preloaded sound
+      setPreloadedSongs(prev => ({
+        ...prev,
+        [nextSong.id]: sound
+      }));
+      
+      console.log(`Successfully preloaded: ${nextSong.title}`);
+    } catch (error) {
+      console.log('Non-critical error preloading next song:', error);
+      // Don't throw - preloading failure shouldn't interrupt playback
+    }
+  };
+
+  // Trigger preload whenever the queue changes or a new song starts playing
+  useEffect(() => {
+    preloadNextSong();
+  }, [queue, currentSongState?.song?.id]);
+
+  // Add additional attempts to get the duration after playback starts
+  useEffect(() => {
+    // Only run this effect when a song is playing and has no duration
+    if (currentSongState?.sound && currentSongState.isPlaying && currentSongState.duration < 1) {
+      console.log('🔄 Setting up duration detection retries for song with missing duration');
+      
+      // Try multiple times to get the duration with increasing delays
+      const retryTimes = [500, 1000, 2000, 5000]; // Milliseconds
+      
+      retryTimes.forEach(delay => {
+        setTimeout(() => {
+          if (currentSongState?.sound && currentSongState.duration < 1) {
+            console.log(`Retry duration detection after ${delay}ms`);
+            updateSongDuration(currentSongState.sound)
+              .catch(err => console.log('Non-critical error in duration retry:', err));
+          }
+        }, delay);
+      });
+    }
+  }, [currentSongState?.isPlaying, currentSongState?.sound, currentSongState?.duration]);
+
+  // Cleanup preloaded songs when unmounting
+  useEffect(() => {
+    return () => {
+      // Clean up any preloaded songs
+      Object.values(preloadedSongs).forEach(sound => {
+        try {
+          sound.unloadAsync().catch(err => {
+            console.log('Non-critical error unloading preloaded sound:', err);
+          });
+        } catch (error) {
+          console.log('Non-critical error during preload cleanup:', error);
+        }
+      });
+    };
+  }, []);
+
+  // Modify the existing updateProgress function or add a new function to track play counts
+  const checkAndUpdatePlayCount = async (currentProgress: number, songId: number) => {
+    // If play count already incremented for this song playback session, do nothing
+    if (playCountIncremented.current) return;
+    
+    // Check if the song has been playing for at least PLAY_COUNT_THRESHOLD seconds
+    if (currentProgress >= PLAY_COUNT_THRESHOLD) {
+      // Increment play count
+      await updateSongPlayCount(songId, (currentSongState?.song.plays || 0) + 1);
+      
+      // Mark this song's play count as incremented for this session
+      playCountIncremented.current = true;
+      
+      console.log(`Play count incremented for song ${songId} after ${PLAY_COUNT_THRESHOLD} seconds of playback`);
+    }
+  };
+
+  // Find the function that updates progress during playback and add play count tracking
+  // This is typically in an interval or onPlaybackStatusUpdate callback
+  
+  // Add this near where the playback status is updated
+  useEffect(() => {
+    if (currentSongState && currentSongState.isPlaying) {
+      const onPlaybackProgressUpdate = async (status: AVPlaybackStatus) => {
+        if (status.isLoaded && !status.isBuffering) {
+          const currentPosition = status.positionMillis / 1000; // Convert to seconds
+          
+          // Check if play count should be incremented
+          if (currentSongState.song.id) {
+            await checkAndUpdatePlayCount(currentPosition, currentSongState.song.id);
+          }
+        }
+      };
+      
+      // Set up the progress update event if it doesn't exist yet
+      if (currentSongState.sound) {
+        currentSongState.sound.setOnPlaybackStatusUpdate(onPlaybackProgressUpdate);
+      }
+    }
+    
+    return () => {
+      // Clean up if needed
+      if (currentSongState && currentSongState.sound) {
+        currentSongState.sound.setOnPlaybackStatusUpdate(null);
+      }
+    };
+  }, [currentSongState]);
+
+  // Modify playSong to track previously played songs
+  const playSong = async (song: Song) => {
+    try {
       setIsLoadingAudio(true);
+      console.log(`Attempting to play song: ${song.title}`);
+      
+      // Track the current song in previousSongs when changing songs
+      if (currentSongState?.song && currentSongState.song.id !== song.id) {
+        console.log(`Adding song to history: ${currentSongState.song.title}`);
+        setPreviousSongs(prev => {
+          // Only keep last 20 songs to avoid memory issues
+          const newHistory = [currentSongState.song, ...prev.slice(0, 19)];
+          return newHistory;
+        });
+      }
+      
+      // If we're playing the same song again, handle specially
+      const hasPreloadedSound = preloadedSongs[song.id] !== undefined;
+      
+      // Declare these variables properly
+      let startPosition = 0;
+      let startPositionMillis = 0;
       
       // If this is the same song that's already playing, just toggle play/pause
       if (currentSongState?.song.id === song.id) {
         console.log('Toggling play/pause on current song');
-        if (currentSongState.isPlaying) {
-          await currentSongState.sound.pauseAsync();
-          setCurrentSongState(prev => prev ? { ...prev, isPlaying: false } : null);
-          
-          // Save progress when pausing
-          saveSongProgress(song.id, currentSongState.progress);
+        
+        // Null check for sound
+        if (!currentSongState.sound) {
+          console.log('Sound object is null, recreating...');
+          // Fall through to recreate the sound
         } else {
-          // Resume with improved fade-in
-          await currentSongState.sound.setVolumeAsync(0.6);
-          await currentSongState.sound.playAsync();
-          
-          // Gradually increase volume to full
-          setTimeout(() => {
-            currentSongState.sound.setVolumeAsync(1.0)
-              .catch(e => console.error('Error setting volume on resume:', e));
-          }, 50);
-          
-          setCurrentSongState(prev => prev ? { ...prev, isPlaying: true } : null);
+          try {
+            // Check if sound is still valid
+            const status = await currentSongState.sound.getStatusAsync();
+            
+            if (status.isLoaded) {
+              if (currentSongState.isPlaying) {
+                await currentSongState.sound.pauseAsync();
+                setCurrentSongState(prev => prev ? { ...prev, isPlaying: false } : null);
+                
+                // Save progress when pausing
+                saveSongProgress(song.id, currentSongState.progress);
+              } else {
+                // When resuming the same song, use lastKnownProgress
+                if (lastKnownProgress > 0) {
+                  startPosition = lastKnownProgress;
+                  startPositionMillis = Math.floor(lastKnownProgress * 1000);
+                  console.log(`Resuming from saved position: ${startPosition.toFixed(2)}s`);
+                  
+                  // Seek to the saved position
+                  await currentSongState.sound.setPositionAsync(startPositionMillis);
+                }
+                
+                // Resume with improved fade-in
+                await currentSongState.sound.setVolumeAsync(0.6);
+                await currentSongState.sound.playAsync();
+                
+                // Gradually increase volume to full
+                setTimeout(() => {
+                  if (currentSongState.sound) {
+                    currentSongState.sound.setVolumeAsync(1.0)
+                      .catch(e => console.log('Non-critical error setting volume on resume:', e));
+                  }
+                }, 50);
+                
+                setCurrentSongState(prev => prev ? { ...prev, isPlaying: true } : null);
+              }
+              setIsLoadingAudio(false);
+              
+              // Preload the next song after toggling
+              preloadNextSong();
+              
+              // Update play count in database
+              if (song.plays !== undefined) {
+                await updateSongPlayCount(song.id, (song.plays || 0) + 1);
+                // Update local state
+                setAllSongs(prev => prev.map(s => 
+                  s.id === song.id ? { ...s, plays: (s.plays || 0) + 1 } : s
+                ));
+              }
+              
+              return;
+            } else {
+              console.log('Sound is no longer loaded, recreating...');
+              // Fall through to recreate the sound
+            }
+          } catch (error) {
+            console.log('Non-critical error checking current sound:', error);
+            // Fall through to recreate the sound
+          }
         }
-        setIsLoadingAudio(false);
-        return;
       }
 
       console.log('Playing new song, stopping all current sounds first');
@@ -954,324 +1187,133 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         progressUpdateTimer.current = null;
       }
       
-      // Use the enhanced stopAllSounds to ensure complete cleanup
+      // Stop all sounds first
       await stopAllSounds();
       
-      // Configure audio mode again to ensure clean state if needed
-      if (!isAudioInitialized.current) {
-        try {
-          await Audio.setAudioModeAsync({
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: true,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-            allowsRecordingIOS: false,
-            interruptionModeIOS: INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-            interruptionModeAndroid: INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
-          });
-          isAudioInitialized.current = true;
-        } catch (initError) {
-          console.error('Error initializing audio:', initError);
-          // Continue anyway - we'll try to play the song
-        }
-      }
-
       // Always reset saved progress for any new song to ensure consistent behavior
       await resetSavedProgress(song.id);
-      const startPosition = 0; // Always start from the beginning
-      const startPositionMillis = 0;
+      
+      // When playing a completely new song, reset progress
+      startPosition = 0;
+      startPositionMillis = 0;
       
       console.log(`Starting song from position: ${startPosition.toFixed(2)}s`);
-      console.log('Creating or reusing sound object with optimized settings');
       
-      // NEW: Ensure we have a clean state for the new playback
-      let newSound: Audio.Sound | null = null;
+      let sound: Audio.Sound;
       
-      // Create an AbortController with a timeout to prevent hanging
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        console.log('Audio loading timeout reached (10s), aborting load');
-        controller.abort();
-      }, 10000); // 10 second timeout
-      
-      try {
-        // First, try to fully unload any existing instance of this song
-        if (soundObjects[song.id]) {
-          try {
-            await soundObjects[song.id].stopAsync();
-            await soundObjects[song.id].unloadAsync();
-          } catch (unloadError) {
-            console.log('Non-critical error unloading existing sound:', unloadError);
-            // Continue - we'll create a new sound instance
-          }
-        }
-      
-        // Create a new sound object with minimal initial settings
-        // Pass the AbortController signal if the Audio API supports it
-        console.log('Starting audio load with timeout protection');
-        const loadOptions = { shouldPlay: false, volume: 0 }; // Start with zero volume to avoid pops
+      // Use preloaded sound if available
+      if (hasPreloadedSound) {
+        console.log('Using preloaded sound for faster startup');
+        sound = preloadedSongs[song.id];
         
-        const { sound } = await Promise.race([
-          Audio.Sound.createAsync(
-            song.audio,
-            loadOptions,
-            onPlaybackStatusUpdate
-          ),
-          new Promise<never>((_, reject) => {
-            // Listen for abort signal
-            controller.signal.addEventListener('abort', () => {
-              reject(new Error('Audio loading timed out after 10 seconds'));
-            });
-          })
-        ]);
+        // Remove from preloaded cache since we're using it now
+        const newPreloaded = { ...preloadedSongs };
+        delete newPreloaded[song.id];
+        setPreloadedSongs(newPreloaded);
+      } else {
+        // Create a new sound if not preloaded
+        console.log('Creating new sound (not preloaded)');
+        sound = new Audio.Sound();
         
-        // Clear the timeout since loading succeeded
-        clearTimeout(timeoutId);
-        
-        newSound = sound;
-        
-        // Pre-load/prepare the sound before playing
-        await newSound.setPositionAsync(startPositionMillis);
-        
-        // Get the initial status to retrieve duration
-        const initialStatus = await newSound.getStatusAsync();
-        const initialDuration = initialStatus.isLoaded && initialStatus.durationMillis 
-          ? initialStatus.durationMillis / 1000 
-          : 0;
-        
-        console.log(`Initial status - duration: ${initialDuration.toFixed(2)}s, position: ${(initialStatus.isLoaded ? initialStatus.positionMillis / 1000 : 0).toFixed(2)}s`);
-        
-        // Set status with all our optimized settings at once
-        await newSound.setStatusAsync({
-          progressUpdateIntervalMillis: 100,
-          rate: 1.0,
-          shouldCorrectPitch: true,
-          volume: 0.1, // Very low initial volume
-          // We don't set shouldPlay: true to allow for a cleaner start
-        });
-        
-        // Allow audio system to fully prepare
-        await new Promise(resolve => setTimeout(resolve, 50));
-        
-        // Create the new song state - initialize with the correct values
-        const newSongState: SongState = {
-          song,
-          sound: newSound,
-          isPlaying: false,
-          progress: startPosition,
-          duration: initialDuration
-        };
-        
-        console.log(`Initial song duration: ${initialDuration.toFixed(2)}s`);
-        
-        // Update state before playing
-        setCurrentSongState(newSongState);
-        setSoundObjects(prev => ({ ...prev, [song.id]: newSound! }));
-        
-        // Set up a manual progress update timer specifically for the first song
-        // to ensure UI updates even if the Audio API is not sending frequent updates
-        if (isFirstSongAfterReload.current) {
-          console.log('Setting up manual progress tracker for first song');
-          
-          // Start a timer that updates the progress manually every 100ms
-          progressUpdateTimer.current = setInterval(() => {
-            if (newSound) {
-              newSound.getStatusAsync().then(status => {
-                if (status.isLoaded && status.isPlaying) {
-                  const currentPositionSec = status.positionMillis / 1000;
-                  
-                  // Only log occasionally to avoid console spam
-                  if (Math.floor(currentPositionSec) % 2 === 0) {
-                    console.log(`Manual progress update: ${currentPositionSec.toFixed(2)}s`);
-                  }
-                  
-                  // Force update the state regardless of other conditions
-                  setCurrentSongState(prev => {
-                    if (!prev) return null;
-                    return {
-                      ...prev,
-                      progress: currentPositionSec,
-                      // If we have a duration now, update it
-                      duration: status.durationMillis ? status.durationMillis / 1000 : prev.duration
-                    };
-                  });
-                }
-              }).catch(err => {
-                console.error('Error in manual progress update:', err);
-              });
-            }
-          }, 100);
-          
-          // Reset the flag after the first song
-          isFirstSongAfterReload.current = false;
-        }
-        
-        // Start playback with ramp-up volume pattern
-        console.log('Starting playback with smooth volume ramp-up');
-        
-        // Start playback 
-        await newSound.playAsync();
-        
-        // Update with more frequent status update interval for better UI feedback
-        await newSound.setStatusAsync({
-          progressUpdateIntervalMillis: 50, // More frequent updates (50ms) for smoother slider movement
-          shouldCorrectPitch: true,
-        });
-        
-        // Multi-stage duration detection for the first song
-        // Try to get duration immediately after loading
-        if (initialDuration === 0) {
-          console.log('Initial duration is zero, scheduling multiple detection attempts');
-          
-          // First attempt - immediately after loading
-          await updateSongDuration(newSound!);
-          
-          // Second attempt - after a short delay
-          setTimeout(async () => {
-            if (currentSongState?.duration === 0 && newSound) {
-              console.log('Second duration detection attempt (300ms)');
-              await updateSongDuration(newSound);
-            }
-          }, 300);
-          
-          // Third attempt - after playback has started for a bit
-          setTimeout(async () => {
-            if (currentSongState?.duration === 0 && newSound) {
-              console.log('Third duration detection attempt (1500ms)');
-              await updateSongDuration(newSound);
-            }
-          }, 1500);
-        } else {
-          // Even with a non-zero initial duration, still try to get a more accurate one
-          setTimeout(async () => {
-            if (newSound) {
-              await updateSongDuration(newSound);
-            }
-          }, 300);
-        }
-        
-        // Immediately after playback starts, set a sequence of increasing volumes
-        // This creates a smooth fade-in effect that eliminates pops/clicks
-        setTimeout(() => {
-          if (newSound) newSound.setVolumeAsync(0.3)
-            .catch(e => console.log('Volume step error:', e));
-          
-          setTimeout(() => {
-            if (newSound) newSound.setVolumeAsync(0.6)
-              .catch(e => console.log('Volume step error:', e));
-            
-            setTimeout(() => {
-              if (newSound) newSound.setVolumeAsync(0.8)
-                .catch(e => console.log('Volume step error:', e));
-              
-              setTimeout(() => {
-                if (newSound) newSound.setVolumeAsync(1.0)
-                  .catch(e => console.log('Volume step error:', e));
-              }, 30);
-            }, 30);
-          }, 30);
-        }, 30);
-        
-        // Update state to reflect playing status
-        setCurrentSongState(prev => {
-          if (!prev) return null;
-          return { 
-            ...prev, 
-            isPlaying: true 
-          };
-        });
-        
-        // Try to get a more accurate duration again after playback has started
-        setTimeout(async () => {
-          await updateSongDuration(newSound!);
-        }, 1500);
-        
-        console.log('Song playback started successfully');
-      } catch (playError) {
-        // Clear the timeout to prevent memory leaks
-        clearTimeout(timeoutId);
-        
-        console.error('Error during song playback setup:', playError);
-        
-        // Check if this was a timeout error
-        if (playError instanceof Error && playError.message.includes('timed out')) {
-          console.log('Audio loading timed out - attempting simplified playback');
-          Alert.alert(
-            'Playback Delay', 
-            'The audio is taking longer than expected to load. Please try again or choose another song.',
-            [{ text: 'OK' }]
+        // Load the audio file
+        try {
+          await sound.loadAsync(
+            { uri: song.song_url },
+            { positionMillis: startPositionMillis, shouldPlay: false }
           );
+        } catch (error) {
+          console.error(`Error loading audio: ${error}`);
           setIsLoadingAudio(false);
+          Alert.alert('Error', 'Failed to load audio file');
           return;
         }
-        
-        // Recovery attempt with simplified approach
-        try {
-          // Clean up the failed sound if it exists
-          if (newSound) {
-            try {
-              await newSound.stopAsync();
-              await newSound.unloadAsync();
-            } catch (cleanupError) {
-              console.log('Error cleaning up failed sound:', cleanupError);
-              // Continue with recovery
-            }
-          }
-          
-          console.log('Attempting recovery with simplified playback...');
-          
-          // Create a simpler sound object as a fallback
-          const { sound: recoverySound } = await Audio.Sound.createAsync(
-            song.audio,
-            { 
-              shouldPlay: true, 
-              positionMillis: startPositionMillis,
-              volume: 1.0
-            }
-          );
-          
-          // Update sound reference in state
-          setCurrentSongState({
-            song,
-            sound: recoverySound,
-            isPlaying: true,
-            progress: startPosition,
-            duration: 0
-          });
-          
-          setSoundObjects(prev => ({ ...prev, [song.id]: recoverySound }));
-          
-          console.log('Recovery playback started');
-        } catch (recoveryError) {
-          console.error('Recovery attempt failed:', recoveryError);
-          throw recoveryError; // Let the outer catch handle this
-        }
       }
-    } catch (error) {
-      console.error('Error playing song:', error);
-      // Reset state on error
-      setCurrentSongState(null);
-      Alert.alert('Playback Error', 'Could not play the selected song. Please try again.');
-    } finally {
+      
+      // Set audio mode to ensure playback continues even with screen locked
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        shouldDuckAndroid: true,
+      });
+      
+      // Start playback with gentle fade-in
+      try {
+        // Begin with reduced volume for fade-in
+        await sound.setVolumeAsync(0.6);
+        
+        // Setup listener for playback status updates
+        sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+        
+        // Start playback
+        console.log('Starting sound playback');
+        await sound.playAsync();
+        
+        // Fade in volume after a short delay
+        setTimeout(() => {
+          sound.setVolumeAsync(1.0)
+            .catch(e => console.log('Non-critical error setting volume after play:', e));
+        }, 50);
+      } catch (playError) {
+        console.error(`Error playing audio: ${playError}`);
+        setIsLoadingAudio(false);
+        Alert.alert('Error', 'Failed to play audio file');
+        return;
+      }
+      
+      // Update current song state
+      setCurrentSongState({
+        song: {
+          ...song,
+          isLiked: likedSongs.some(s => s.id === song.id)
+        },
+        sound,
+        isPlaying: true,
+        progress: startPosition,
+        duration: song.duration || 0
+      });
+      
+      // Set lastKnownProgress to the start position
+      setLastKnownProgress(startPosition);
+      
       setIsLoadingAudio(false);
-      setIsBuffering(false);
+      
+      // Preload the next song after this one starts
+      preloadNextSong();
+
+      // Reset the play count increment flag when a new song is played
+      playCountIncremented.current = false;
+      playbackStartTime.current = Date.now();
+    } catch (error) {
+      console.error(`Error in playSong: ${error}`);
+      setIsLoadingAudio(false);
+      Alert.alert('Error', 'Something went wrong playing the song');
     }
   };
 
   const togglePlayPause = async () => {
-    if (!currentSongState?.sound) {
-      console.log('No sound to toggle');
-      return;
-    }
-    
     try {
-      // First check if the sound is still loaded
-      const status = await currentSongState.sound.getStatusAsync();
+      if (!currentSongState || !currentSongState.sound) {
+        console.log('No song currently loaded to toggle play/pause');
+        return;
+      }
       
-      if (!status.isLoaded) {
-        console.log('Sound is no longer loaded, reloading song');
-        // If the sound is not loaded anymore, reload the song
+      // Check if sound is still valid before trying to use it
+      try {
+        const status = await currentSongState.sound.getStatusAsync();
+        if (!status.isLoaded) {
+          console.log('Current sound is no longer loaded, cannot toggle');
+          // If we have song info, try to reload it
+          if (currentSongState.song) {
+            console.log('Attempting to reload song');
+            playSong(currentSongState.song);
+          }
+          return;
+        }
+      } catch (statusError) {
+        console.log('Non-critical error checking sound status:', statusError);
+        // If we have song info, try to reload it
         if (currentSongState.song) {
+          console.log('Error with sound, attempting to reload song');
           playSong(currentSongState.song);
         }
         return;
@@ -1280,184 +1322,407 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       if (currentSongState.isPlaying) {
         console.log('Pausing current song');
         
-        // Fade out before pausing for smoother transition
-        await currentSongState.sound.setVolumeAsync(0.5);
-        setTimeout(async () => {
+        try {
+          // Fade out before pausing for smoother transition
+          await currentSongState.sound.setVolumeAsync(0.5);
+          setTimeout(async () => {
+            try {
+              // Further reduce volume to near-zero before full pause
+              if (currentSongState?.sound) {
+                await currentSongState.sound.setVolumeAsync(0.2);
+                await currentSongState.sound.pauseAsync();
+              }
+            } catch (pauseError) {
+              console.log('Non-critical error during fade-out pause:', pauseError);
+            }
+          }, 30);
+        } catch (fadeError) {
+          console.log('Non-critical error during volume fade:', fadeError);
+          // Still try to pause even if the fade fails
           try {
-            // Further reduce volume to near-zero before full pause
-            await currentSongState.sound.setVolumeAsync(0.2);
             await currentSongState.sound.pauseAsync();
-          } catch (pauseError) {
-            console.error('Error during fade-out pause:', pauseError);
+          } catch (directPauseError) {
+            console.log('Could not pause sound:', directPauseError);
           }
-        }, 30);
+        }
         
         setCurrentSongState(prev => prev ? { ...prev, isPlaying: false } : null);
         
         // Save progress when pausing
-        saveSongProgress(currentSongState.song.id, currentSongState.progress);
+        if (currentSongState.song) {
+          saveSongProgress(currentSongState.song.id, currentSongState.progress);
+        }
       } else {
         console.log('Resuming current song');
         
-        // Start at a lower volume and ramp up for smoother resume
-        await currentSongState.sound.setVolumeAsync(0.2);
-        
-        // Resume playback
-        await currentSongState.sound.playAsync();
-        
-        // Sequential volume increase for smoother transition
-        setTimeout(() => {
-          if (currentSongState?.sound) {
-            currentSongState.sound.setVolumeAsync(0.5)
-              .catch(e => console.error('Error in volume ramp step 1:', e));
-            
-            setTimeout(() => {
-              if (currentSongState?.sound) {
-                currentSongState.sound.setVolumeAsync(0.8)
-                  .catch(e => console.error('Error in volume ramp step 2:', e));
-                
-                setTimeout(() => {
-                  if (currentSongState?.sound) {
-                    currentSongState.sound.setVolumeAsync(1.0)
-                      .catch(e => console.error('Error in final volume ramp:', e));
-                  }
-                }, 30);
-              }
-            }, 30);
+        try {
+          // Start at a lower volume and ramp up for smoother resume
+          await currentSongState.sound.setVolumeAsync(0.2);
+          
+          // Resume playback
+          await currentSongState.sound.playAsync();
+          
+          // Sequential volume increase for smoother transition
+          setTimeout(() => {
+            if (currentSongState?.sound) {
+              currentSongState.sound.setVolumeAsync(0.5)
+                .catch(e => console.log('Non-critical error in volume ramp step 1:', e));
+              
+              setTimeout(() => {
+                if (currentSongState?.sound) {
+                  currentSongState.sound.setVolumeAsync(0.8)
+                    .catch(e => console.log('Non-critical error in volume ramp step 2:', e));
+                  
+                  setTimeout(() => {
+                    if (currentSongState?.sound) {
+                      currentSongState.sound.setVolumeAsync(1.0)
+                        .catch(e => console.log('Non-critical error in final volume ramp:', e));
+                    }
+                  }, 30);
+                }
+              }, 30);
+            }
+          }, 30);
+        } catch (resumeError) {
+          console.log('Non-critical error during resume:', resumeError);
+          // Try direct play without volume changes if the smooth approach fails
+          try {
+            await currentSongState.sound.playAsync();
+          } catch (directPlayError) {
+            console.log('Could not resume sound:', directPlayError);
+            // If we can't resume, try reloading the song
+            if (currentSongState.song) {
+              console.log('Error with sound resume, attempting to reload');
+              playSong(currentSongState.song);
+              return;
+            }
           }
-        }, 30);
+        }
         
         setCurrentSongState(prev => prev ? { ...prev, isPlaying: true } : null);
       }
     } catch (error) {
-      console.error('Error toggling play/pause:', error);
+      console.log('Non-critical error toggling play/pause:', error);
       
       // On error, try to reload the song
-      if (currentSongState.song) {
+      if (currentSongState?.song) {
         console.log('Error with sound, attempting to reload');
         playSong(currentSongState.song);
       }
     }
   };
 
+  // Enhanced seek function
   const seekTo = async (position: number) => {
-    if (!currentSongState?.sound) {
-      console.log('No sound to seek');
+    console.log(`Seeking to position ${position}`);
+    
+    if (!currentSongState) {
+      console.log('No song is playing, cannot seek');
       return;
     }
     
     try {
-      // Check if the sound is loaded
-      const status = await currentSongState.sound.getStatusAsync();
-      if (!status.isLoaded) {
-        console.error('Cannot seek: sound is not loaded');
-        return;
-      }
-
-      console.log(`Seeking to position: ${position.toFixed(2)}s`);
-      
-      // Convert position from seconds to milliseconds
-      const positionMillis = Math.floor(position * 1000);
-      
-      // Temporarily lower volume to avoid pops/clicks during seeking
-      const wasPlaying = currentSongState.isPlaying;
-      
-      // If it's playing, temporarily pause
-      if (wasPlaying) {
-        await currentSongState.sound.setVolumeAsync(0.3);
-      }
-      
-      // Add a timeout for seek operation to prevent hanging
-      const seekPromise = currentSongState.sound.setPositionAsync(positionMillis);
-      const timeoutPromise = new Promise((_, reject) => {
-        const timeoutId = setTimeout(() => {
-          reject(new Error('Seek operation timed out after 5 seconds'));
-          clearTimeout(timeoutId);
-        }, 5000);
-      });
-      
-      // Perform the seek with timeout protection
-      try {
-        await Promise.race([seekPromise, timeoutPromise]);
-        console.log('Seek completed successfully');
-        
-        // After seeking, try to update the duration as seeking can help get the correct duration
-        setTimeout(async () => {
-          await updateSongDuration(currentSongState.sound);
-        }, 200);
-      } catch (seekError) {
-        if (seekError instanceof Error && seekError.message.includes('timed out')) {
-          console.error('Seek operation timed out');
-          // Try to recover from a timed out seek
-          try {
-            // If playing was paused, try to resume anyway
-            if (wasPlaying && currentSongState?.sound) {
-              await currentSongState.sound.playAsync();
-              await currentSongState.sound.setVolumeAsync(1.0);
-            }
-          } catch (recoveryError) {
-            console.error('Error recovering from seek timeout:', recoveryError);
-          }
-          
-          // Update state even if the seek failed
-          setCurrentSongState(prev => {
-            if (!prev) return null;
-            return {
-              ...prev,
-              progress: position
-            };
-          });
-          
-          return;
-        }
-        
-        // If it's another error, re-throw to be caught by outer try/catch
-        throw seekError;
-      }
-      
-      // If it was playing and got paused, resume playback
-      if (wasPlaying) {
-        setTimeout(async () => {
-          // May need to play again if seeking paused it
-          if (!currentSongState?.sound) return;
-          
-          const currentStatus = await currentSongState.sound.getStatusAsync();
-          if (currentStatus.isLoaded && !currentStatus.isPlaying && wasPlaying) {
-            await currentSongState.sound.playAsync();
-          }
-          
-          // Restore full volume with a smooth ramp
-          currentSongState.sound.setVolumeAsync(0.5);
-          setTimeout(() => {
-            if (currentSongState?.sound) {
-              currentSongState.sound.setVolumeAsync(1.0);
-            }
-          }, 50);
-        }, 50);
-      }
-      
-      // Update the song state with the new position
+      // Set seeking flag
       setCurrentSongState(prev => {
-        if (!prev) return null;
+        if (!prev) return prev;
         return {
           ...prev,
-          progress: position
+          isSeeking: true
         };
       });
+      
+      // Pause playback temporarily to ensure accurate seeking
+      const wasPlaying = currentSongState.isPlaying;
+      if (wasPlaying) {
+        await currentSongState.sound.pauseAsync().catch(e => console.log('Non-critical pause error during seek:', e));
+      }
+      
+      // Perform the seek operation
+      await currentSongState.sound.setPositionAsync(position * 1000);
+      
+      // Update state with the new position
+      setCurrentSongState(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          progress: position,
+          isSeeking: false,
+          isPlaying: wasPlaying
+        };
+      });
+      
+      // Reset our time tracking reference
+      lastTimeRef.current = Date.now();
+      
+      // Resume playback if it was playing before
+      if (wasPlaying) {
+        await currentSongState.sound.playAsync().catch(e => console.log('Non-critical play error after seek:', e));
+      }
+      
+      // Save progress for app resume/restart
+      await saveSongProgress(currentSongState.song.id, position);
+      
+      console.log(`Successfully seeked to ${position}s`);
+      return true;
     } catch (error) {
-      console.error('Error seeking:', error);
-      // Try to recover from general seek errors
-      if (currentSongState?.sound) {
+      console.error('Error seeking to position:', error);
+      
+      // Clear seeking flag on error
+      setCurrentSongState(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          isSeeking: false
+        };
+      });
+      
+      return false;
+    }
+  };
+
+  // Clean up progress update interval
+  useEffect(() => {
+    return () => {
+      if (progressUpdateInterval.current) {
+        clearInterval(progressUpdateInterval.current);
+      }
+    };
+  }, []);
+
+  // Function to get all available songs from all playlists
+  const getAllSongs = (): Song[] => {
+    const allSongsList: Song[] = [...allSongs];
+    
+    // Add songs from playlists
+    playlists.forEach(playlist => {
+      playlist.songs.forEach(song => {
+        if (!allSongsList.some(s => s.id === song.id)) {
+          allSongsList.push(song);
+        }
+      });
+    });
+    
+    // Add liked songs
+    likedSongs.forEach(song => {
+      if (!allSongsList.some(s => s.id === song.id)) {
+        allSongsList.push(song);
+      }
+    });
+    
+    console.log(`Total songs available for random play: ${allSongsList.length}`);
+    return allSongsList;
+  };
+  
+  // Function to get the next song from queue or random selection
+  const getNextSong = (): Song | null => {
+    console.log('Getting next song...');
+    
+    // Check if there are songs in the queue
+    if (queue.length > 0) {
+      console.log('Next song from queue:', queue[0].title);
+      // Return first song in queue
+      return queue[0];
+    }
+    
+    // If auto-play is enabled, select a random song
+    if (isAutoPlayEnabled) {
+      console.log('Autoplay is enabled, selecting random song');
+      const allSongs = getAllSongs();
+      
+      // Store the current song and previous songs to avoid playing them again
+      const recentlyPlayedIds = [
+        ...(currentSongState?.song ? [currentSongState.song.id] : []),
+        ...previousSongs.slice(0, 3).map(song => song.id) // Avoid the last 3 played songs
+      ];
+      
+      console.log(`Excluding ${recentlyPlayedIds.length} recently played songs from random selection`);
+      
+      // Filter out recently played songs
+      const availableSongs = allSongs.filter(song => !recentlyPlayedIds.includes(song.id));
+      
+      if (availableSongs.length > 0) {
+        // Improved random selection - use crypto for better randomness if available
+        let randomIndex: number;
+        
         try {
-          // Restore playback state
-          if (currentSongState.isPlaying) {
-            await currentSongState.sound.playAsync();
-            await currentSongState.sound.setVolumeAsync(1.0);
+          // Use more secure random number generation if available
+          if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+            const randomArray = new Uint32Array(1);
+            window.crypto.getRandomValues(randomArray);
+            randomIndex = randomArray[0] % availableSongs.length;
+          } else {
+            // Fallback to Math.random with timestamp seed for better distribution
+            let seed = Date.now();
+            const rng = () => {
+              const x = Math.sin(seed++) * 10000;
+              return x - Math.floor(x);
+            };
+            randomIndex = Math.floor(rng() * availableSongs.length);
           }
-        } catch (recoveryError) {
-          console.error('Error recovering from seek error:', recoveryError);
+        } catch (error) {
+          // Ultimate fallback to simple Math.random
+          randomIndex = Math.floor(Math.random() * availableSongs.length);
+        }
+        
+        const randomSong = availableSongs[randomIndex];
+        console.log(`Selected random song: ${randomSong.title} (ID: ${randomSong.id})`);
+        return randomSong;
+      } else if (allSongs.length > 0) {
+        // If all songs were recently played, just pick truly random from all songs
+        // except the currently playing one
+        const trulyAvailableSongs = currentSongState?.song 
+          ? allSongs.filter(song => song.id !== currentSongState.song.id)
+          : allSongs;
+          
+        if (trulyAvailableSongs.length > 0) {
+          const randomIndex = Math.floor(Math.random() * trulyAvailableSongs.length);
+          const randomSong = trulyAvailableSongs[randomIndex];
+          console.log(`All songs were recently played. Selected random song anyway: ${randomSong.title}`);
+          return randomSong;
         }
       }
+      
+      console.log('No available songs for autoplay');
+    } else {
+      console.log('Autoplay is disabled, not selecting a random song');
+    }
+    
+    return null;
+  };
+  
+  // Function to play the next song from queue
+  const playNextSong = async () => {
+    try {
+      console.log('Playing next song...');
+      
+      // Get the next song (from queue or random if autoplay enabled)
+      const nextSong = getNextSong();
+      
+      // If queue had a song, remove it from queue
+      if (queue.length > 0) {
+        console.log('Removing song from queue');
+        setQueue(prev => prev.slice(1));
+      }
+      
+      // If we have a song to play, play it
+      if (nextSong) {
+        console.log('Playing next song:', nextSong.title);
+        await playSong(nextSong);
+        return true;
+      } else {
+        console.log('No next song available');
+      }
+      
+      return false;
+    } catch (error) {
+      console.log('Error playing next song:', error);
+      return false;
+    }
+  };
+
+  // Toggle auto-play feature
+  const toggleAutoPlay = () => {
+    setIsAutoPlayEnabled(prev => !prev);
+  };
+
+  // Add multiple songs to queue
+  const addMultipleToQueue = (songs: Song[]) => {
+    setQueue(prev => {
+      // Filter out songs that are already in the queue
+      const newSongs = songs.filter(song => !prev.some(s => s.id === song.id));
+      return [...prev, ...newSongs];
+    });
+  };
+
+  // Clear the entire queue
+  const clearQueue = () => {
+    setQueue([]);
+  };
+
+  // Reorder songs in the queue
+  const reorderQueue = (fromIndex: number, toIndex: number) => {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= queue.length || toIndex >= queue.length) {
+      return;
+    }
+    
+    setQueue(prev => {
+      const newQueue = [...prev];
+      const [movedSong] = newQueue.splice(fromIndex, 1);
+      newQueue.splice(toIndex, 0, movedSong);
+      return newQueue;
+    });
+  };
+
+  // Skip to next song
+  const skipToNext = async () => {
+    // Ensure we save progress of current song
+    if (currentSongState?.song) {
+      saveSongProgress(currentSongState.song.id, currentSongState.progress);
+    }
+    
+    // Play next song from queue or random
+    return playNextSong();
+  };
+
+  // Add getNextQueueSong function to access in the context
+  const getNextQueueSong = (): Song | null => {
+    if (queue.length > 0) {
+      return queue[0];
+    }
+    return null;
+  };
+
+  // Skip to previous song or restart current song
+  const skipToPrevious = async (): Promise<boolean> => {
+    try {
+      console.log('skipToPrevious called');
+      
+      // If we have a current song
+      if (currentSongState) {
+        // If progress is less than 5 seconds, go to previous song
+        if (currentSongState.progress < 5) {
+          console.log('Progress < 5 seconds, trying to play previous song');
+          
+          // Check if we have a previous song in history
+          if (previousSongs.length > 0) {
+            // Get the previous song from history
+            const prevSong = previousSongs[0];
+            console.log(`Playing previous song: ${prevSong.title}`);
+            
+            // Remove the song from history
+            setPreviousSongs(prev => prev.slice(1));
+            
+            // Play the previous song
+            await playSong(prevSong);
+            return true;
+          } else {
+            console.log('No previous songs in history, restarting current song');
+            // If no previous song, just restart the current one
+            await seekTo(0);
+            return true;
+          }
+        } else {
+          console.log(`Progress > 5 seconds (${currentSongState.progress.toFixed(2)}s), restarting current song`);
+          // If progress is more than 5 seconds, restart the current song
+          await seekTo(0);
+          return true;
+        }
+      }
+      
+      // If no current song but we have a previous song
+      if (previousSongs.length > 0) {
+        const prevSong = previousSongs[0];
+        console.log(`No current song, playing from history: ${prevSong.title}`);
+        setPreviousSongs(prev => prev.slice(1));
+        await playSong(prevSong);
+        return true;
+      }
+      
+      console.log('No current song and no history, cannot go to previous');
+      return false;
+    } catch (error) {
+      console.log('Error in skipToPrevious:', error);
+      return false;
     }
   };
 
@@ -1489,17 +1754,27 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         getSavedProgress,
         saveSongProgress,
         seekTo,
+        skipToNext,
+        skipToPrevious,
+        addMultipleToQueue,
+        clearQueue,
+        reorderQueue,
+        isAutoPlayEnabled,
+        toggleAutoPlay,
+        getNextQueueSong,
+        lastKnownProgress,
+        topArtists,
       }}
     >
       {children}
     </MusicContext.Provider>
   );
-}
+};
 
-export function useMusic() {
+export const useMusic = () => {
   const context = useContext(MusicContext);
   if (context === undefined) {
     throw new Error('useMusic must be used within a MusicProvider');
   }
   return context;
-} 
+};
